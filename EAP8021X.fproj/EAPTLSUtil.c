@@ -48,12 +48,16 @@
 #include <CoreFoundation/CFData.h>
 #include <Security/SecureTransportPriv.h>
 #include <Security/oidsalg.h>
+#include <Security/SecKeychain.h>
 #include <Security/SecPolicySearch.h>
 #include <Security/SecPolicy.h>
 #include "EAPTLSUtil.h"
 #include "EAPSecurity.h"
 #include "printdata.h"
 #include "myCFUtil.h"
+
+/* set a 12-hour session cache timeout */
+#define kEAPTLSSessionCacheTimeoutSeconds	(12 * 60 * 60)
 
 #ifdef NOTYET
 /*
@@ -342,7 +346,7 @@ EAPSSLContextCreate(SSLProtocol protocol, bool is_server,
     status = SSLSetIOFuncs(ctx, func_read, func_write);
     if (status) {
 	goto cleanup;
-    } 
+    }
     status = SSLSetProtocolVersion(ctx, protocol);
     if (status) {
 	goto cleanup;
@@ -357,6 +361,7 @@ EAPSSLContextCreate(SSLProtocol protocol, bool is_server,
 	    goto cleanup;
 	}
     }
+    (void)SSLSetSessionCacheTimeout(ctx, kEAPTLSSessionCacheTimeoutSeconds);
     return (ctx);
 
  cleanup:
@@ -509,7 +514,7 @@ EAPTLSComputeKeyData(SSLContextRef ssl_context,
 {
     char		master_secret[SSL_MASTER_SECRET_SIZE];
     size_t		master_secret_length;
-    size_t		offset = 0;
+    size_t		offset;
     char		random[SSL_CLIENT_SRVR_RAND_SIZE * 2];
     size_t		random_size = 0;
     size_t		size;
@@ -536,7 +541,7 @@ EAPTLSComputeKeyData(SSLContextRef ssl_context,
     status = SSLInternalServerRandom(ssl_context, random + offset, &size);
     if (status != noErr) {
 	fprintf(stderr, 
-		"EAPTLSComputeSessionKeyy: SSLInternalClientRandom failed, %s\n",
+		"EAPTLSComputeSessionKey: SSLInternalServerRandom failed, %s\n",
 		EAPSSLErrorString(status));
 	return (status);
     }
@@ -720,18 +725,29 @@ my_CFArrayCreateByAppendingArrays(CFArrayRef array1, CFArrayRef array2)
     return (ret);
 }
 
+static CFArrayRef
+copy_user_trust_proceed_certs(CFDictionaryRef properties)
+{
+    CFArrayRef		p;
+
+    p = CFDictionaryGetValue(properties,
+			     kEAPClientPropTLSUserTrustProceedCertificateChain);
+    if (p != NULL) {
+	p = EAPCFDataArrayCreateSecCertificateArray(p);
+    }
+    return (p);
+}
+
 EAPClientStatus
 EAPTLSVerifyServerCertificateChain(CFDictionaryRef properties, 
-				   int32_t trust_proceed_id,
 				   CFArrayRef server_certs, 
 				   OSStatus * ret_status)
 {
     bool		allow_any_root;
     EAPClientStatus	client_status;
     int			count;
-    CSSM_RETURN		crtn;
+    OSStatus		crtn;
     SecPolicyRef	policy = NULL;
-    CFNumberRef		proceed_cf;
     bool		replace_roots = FALSE;
     SecCertificateRef	root_cert;
     OSStatus		status;
@@ -741,36 +757,33 @@ EAPTLSVerifyServerCertificateChain(CFDictionaryRef properties,
     CFArrayRef		trusted_roots = NULL;
 
     *ret_status = 0;
+    client_status = kEAPClientStatusInternalError;
 
     /* don't bother verifying server's identity */
     if (my_CFDictionaryGetBooleanValue(properties, 
 				       kEAPClientPropTLSVerifyServerCertificate,
 				       TRUE) == FALSE) {
 	client_status = kEAPClientStatusOK;
+    }
+    else {
+	CFArrayRef	proceed;
+
+	proceed = copy_user_trust_proceed_certs(properties);
+	if (proceed != NULL
+	    && EAPSecCertificateListEqual(proceed, server_certs)) {
+	    /* user said it was OK to go */
+	    client_status = kEAPClientStatusOK;
+	}
+	my_CFRelease(&proceed);
+    }
+    if (client_status == kEAPClientStatusOK) {
 	goto done;
     }
-
-    proceed_cf = CFDictionaryGetValue(properties, 
-				      kEAPClientPropTLSUserTrustProceed);
-    if (isA_CFNumber(proceed_cf) != NULL) {
-	int32_t		proceed;
-
-	if (CFNumberGetValue(proceed_cf, kCFNumberSInt32Type, &proceed)) {
-	    if (trust_proceed_id == proceed) {
-		/* user said it was OK to go */
-		client_status = kEAPClientStatusOK;
-		goto done;
-	    }
-	}
-    }
-
     if (server_certs == NULL) {
-	client_status = kEAPClientStatusInternalError;
 	goto done;
     }
     count = CFArrayGetCount(server_certs);
     if (count == 0) {
-	client_status = kEAPClientStatusInternalError;
 	goto done;
     }
     allow_any_root
@@ -873,14 +886,33 @@ EAPTLSVerifyServerCertificateChain(CFDictionaryRef properties,
 	}
     }
     my_CFRelease(&trusted_roots);
+
     status = SecTrustEvaluate(trust, &trust_result);
-    if (status != noErr) {
+    switch (status) {
+    case noErr:
+	break;
+    case errSecNoDefaultKeychain:
+	status = SecKeychainSetPreferenceDomain(kSecPreferencesDomainSystem);
+	if (status != noErr) {
+	    syslog(LOG_NOTICE, 
+		   "EAPTLSVerifyServerCertificateChain: "
+		   "SecKeychainSetPreferenceDomain failed, %s (%d)",
+		   EAPSecurityErrorString(status), status);
+	    goto done;
+	}
+	status = SecTrustEvaluate(trust, &trust_result);
+	if (status == noErr) {
+	    break;
+	}
+	/* FALL THROUGH */
+    default:
 	*ret_status = status;
 	syslog(LOG_NOTICE, 
 	       "EAPTLSVerifyServerCertificateChain: "
 	       "SecTrustEvaluate failed, %s (%d)",
 	       EAPSecurityErrorString(status), status);
 	goto done;
+	break;
     }
     switch (trust_result) {
     case kSecTrustResultProceed:

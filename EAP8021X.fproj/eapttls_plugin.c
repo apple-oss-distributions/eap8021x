@@ -141,7 +141,6 @@ typedef struct {
     bool			authentication_started;
     OSStatus			trust_ssl_error;
     EAPClientStatus		trust_status;
-    int32_t			trust_proceed_id;
     bool			trust_proceed;
     bool			key_data_valid;
     char			key_data[128];
@@ -264,7 +263,6 @@ eapttls_start(EAPClientPluginDataRef plugin)
     context->handshake_complete = FALSE;
     context->authentication_started = FALSE;
     context->trust_proceed = FALSE;
-    context->trust_proceed_id++;
     context->key_data_valid = FALSE;
     context->last_write_size = 0;
     context->session_was_resumed = FALSE;
@@ -315,7 +313,6 @@ eapttls_init(EAPClientPluginDataRef plugin, CFArrayRef * required_props,
 	goto failed;
     }
     bzero(context, sizeof(*context));
-    context->trust_proceed_id = random();
     context->mtu = plugin->mtu;
     inner_auth_type = get_inner_auth_type(plugin->properties);
     if (inner_auth_type == kInnerAuthTypeNone) {
@@ -508,7 +505,7 @@ eapttls_chap(EAPClientPluginDataRef plugin)
     void *		data;
     int			data_length;
     int			data_length_r;
-    char		key_data[17];
+    uint8_t		key_data[17];
     size_t		length;
     void *		offset;
     bool		ret = TRUE;
@@ -611,11 +608,11 @@ eapttls_mschap(EAPClientPluginDataRef plugin)
     void *		data;
     int			data_length;
     int			data_length_r;
-    char		key_data[MSCHAP_NT_CHALLENGE_SIZE + MSCHAP_IDENT_SIZE];
+    uint8_t		key_data[MSCHAP_NT_CHALLENGE_SIZE + MSCHAP_IDENT_SIZE];
     size_t		length;
     void *		offset;
     bool		ret = TRUE;
-    char		response[MSCHAP_NT_RESPONSE_SIZE];
+    uint8_t		response[MSCHAP_NT_RESPONSE_SIZE];
     OSStatus		status;
     int			user_length_r;
 
@@ -966,7 +963,6 @@ eapttls_verify_server(EAPClientPluginDataRef plugin,
     }
     context->trust_status
 	= EAPTLSVerifyServerCertificateChain(plugin->properties, 
-					     context->trust_proceed_id,
 					     context->server_certs,
 					     &context->trust_ssl_error);
     if (context->trust_status != kEAPClientStatusOK) {
@@ -1431,7 +1427,7 @@ eapttls_require_props(EAPClientPluginDataRef plugin)
 	goto done;
     }
     if (context->trust_proceed == FALSE) {
-	CFStringRef	str = kEAPClientPropTLSUserTrustProceed;
+	CFStringRef	str = kEAPClientPropTLSUserTrustProceedCertificateChain;
 	array = CFArrayCreate(NULL, (const void **)&str,
 			      1, &kCFTypeArrayCallBacks);
     }
@@ -1449,6 +1445,7 @@ static CFDictionaryRef
 eapttls_publish_props(EAPClientPluginDataRef plugin)
 {
     CFArrayRef			cert_list;
+    SSLCipherSuite		cipher = SSL_NULL_WITH_NULL_NULL;
     EAPTTLSPluginDataRef	context = (EAPTTLSPluginDataRef)plugin->private;
     CFMutableDictionaryRef	dict;
 
@@ -1469,15 +1466,21 @@ eapttls_publish_props(EAPClientPluginDataRef plugin)
 			 ? kCFBooleanTrue
 			 : kCFBooleanFalse);
     my_CFRelease(&cert_list);
+    (void)SSLGetNegotiatedCipher(context->ssl_context, &cipher);
+    if (cipher != SSL_NULL_WITH_NULL_NULL) {
+	CFNumberRef	c;
+
+	c = CFNumberCreate(NULL, kCFNumberIntType, &cipher);
+	CFDictionarySetValue(dict, kEAPClientPropTLSNegotiatedCipher, c);
+	CFRelease(c);
+    }
     if (context->last_client_status == kEAPClientStatusUserInputRequired
 	&& context->trust_proceed == FALSE) {
 	CFNumberRef	num;
 	num = CFNumberCreate(NULL, kCFNumberSInt32Type,
 			     &context->trust_status);
 	CFDictionarySetValue(dict, kEAPClientPropTLSTrustClientStatus, num);
-	num = CFNumberCreate(NULL, kCFNumberSInt32Type,
-			     &context->trust_proceed_id);
-	CFDictionarySetValue(dict, kEAPClientPropTLSUserTrustProceed, num);
+	CFRelease(num);
     }
     return (dict);
 }

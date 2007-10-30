@@ -40,7 +40,7 @@
 typedef struct Supplicant_s Supplicant, *SupplicantRef;
 
 SupplicantRef 
-Supplicant_create(int fd, const struct sockaddr_dl * dl_p);
+Supplicant_create(int fd, const struct sockaddr_dl * dl_p, bool system_mode);
 
 void
 Supplicant_free(SupplicantRef * supp_p);
@@ -53,8 +53,12 @@ Supplicant_attached(SupplicantRef supp);
 
 void
 Supplicant_set_debug(SupplicantRef supp, bool debug);
+
 bool
 Supplicant_update_configuration(SupplicantRef supp, 
 				CFDictionaryRef config_dict);
+
+void
+Supplicant_set_no_ui(SupplicantRef supp);
 #endif _S_SUPPLICANT_H
 

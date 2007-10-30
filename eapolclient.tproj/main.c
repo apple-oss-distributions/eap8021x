@@ -80,6 +80,9 @@ eapmschapv2_introspect(EAPClientPluginFuncName name);
 extern EAPClientPluginFuncRef
 eapgtc_introspect(EAPClientPluginFuncName name);
 
+extern EAPClientPluginFuncRef
+eapfast_introspect(EAPClientPluginFuncName name);
+
 EAPClientModuleStatus
 S_load_modules()
 {
@@ -106,6 +109,12 @@ S_load_modules()
     status = EAPClientModuleAddBuiltinModule(peap_introspect);
     if (status != kEAPClientModuleStatusOK) {
 	fprintf(stderr, "EAPClientAddBuiltinModule(peap) failed %d\n",
+		status);
+	return (status);
+    }
+    status = EAPClientModuleAddBuiltinModule(eapfast_introspect);
+    if (status != kEAPClientModuleStatusOK) {
+	fprintf(stderr, "EAPClientAddBuiltinModule(eapfast) failed %d\n",
 		status);
 	return (status);
     }
@@ -194,20 +203,21 @@ main(int argc, char * argv[1])
     char *			if_name = NULL;
     LinkAddressesRef		link_addrs = NULL;
     struct sockaddr_dl *	link = NULL;
+    bool			n_flag = FALSE;
     bool			u_flag = FALSE;
     uid_t			uid = 0;
+    bool			s_flag = FALSE;
 
     link_addrs = LinkAddresses_create();
     if (link_addrs == NULL) {
 	printf("Could not build interface list\n");
 	exit(EX_OSERR);
     }
-    while ((ch = getopt(argc, argv, "c:di:u:g:")) != EOF) {
+    while ((ch = getopt(argc, argv, "c:di:g:nsu:")) != EOF) {
 	switch ((char) ch) {
 	case 'c':
 	    config_file = optarg;
 	    break;
-
 	case 'd':
 	    d_flag = TRUE;
 	    break;
@@ -230,6 +240,12 @@ main(int argc, char * argv[1])
 	    }
 	    gid = strtoul(optarg, NULL, 0);
 	    g_flag = TRUE;
+	    break;
+	case 'n':
+	    n_flag = TRUE;
+	    break;
+	case 's':
+	    s_flag = TRUE;
 	    break;
 	default:
 	    usage(argv[0]);
@@ -255,6 +271,7 @@ main(int argc, char * argv[1])
     fd = eapol_socket(if_name, FALSE);
     if (fd < 0) {
 	my_log(LOG_NOTICE, "eapol_socket(%s) failed", if_name);
+	exit(EX_UNAVAILABLE);
     }
     if (g_flag) {
 	if (setgid(gid) < 0) {
@@ -281,10 +298,13 @@ main(int argc, char * argv[1])
     }
 
     /* the Supplicant owns the file descriptor */
-    supp = Supplicant_create(fd, link);
+    supp = Supplicant_create(fd, link, s_flag);
     if (supp == NULL) {
 	syslog(LOG_NOTICE, "Supplicant_create failed");
 	exit(EX_UNAVAILABLE);
+    }
+    if (n_flag) {
+	Supplicant_set_no_ui(supp);
     }
     if (Supplicant_attached(supp)) {
 	(void)setsid();
