@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002 - 2004 Apple Computer, Inc. All rights reserved.
+ * Copyright (c) 2002-2009 Apple Inc. All rights reserved.
  *
  * @APPLE_LICENSE_HEADER_START@
  * 
@@ -48,8 +48,6 @@
 #include <syslog.h>
 #include <Security/SecureTransport.h>
 #include <Security/SecCertificate.h>
-#include <Security/SecIdentity.h>
-#include <Security/SecIdentitySearch.h>
 #include <sys/param.h>
 #include <EAP8021X/EAPTLSUtil.h>
 #include <EAP8021X/EAPSecurity.h>
@@ -144,7 +142,6 @@ typedef struct {
     bool			trust_proceed;
     bool			key_data_valid;
     char			key_data[128];
-    CFArrayRef			last_trusted_server_certs;
     CFArrayRef			server_certs;
     bool			resume_sessions;
     bool			session_was_resumed;
@@ -205,7 +202,6 @@ eapttls_free_context(EAPTTLSPluginDataRef context)
     }
     my_CFRelease(&context->certs);
     my_CFRelease(&context->server_certs);
-    my_CFRelease(&context->last_trusted_server_certs);
     memoryIOClearBuffers(&context->mem_io);
     free(context);
     return;
@@ -900,42 +896,58 @@ eapttls_mschap2_verify(EAPClientPluginDataRef plugin, int identifier)
 }
 
 static EAPPacketRef
+eapttls_do_inner_auth(EAPClientPluginDataRef plugin,
+		      int identifier, EAPClientStatus * client_status)
+{
+    EAPTTLSPluginDataRef	context = (EAPTTLSPluginDataRef)plugin->private;
+    memoryBufferRef		write_buf = &context->write_buffer; 
+
+    context->authentication_started = TRUE;
+    switch (context->inner_auth_type) {
+    case kInnerAuthTypePAP:
+	if (eapttls_pap(plugin) == FALSE) {
+	    /* do something */
+	}
+	break;
+    case kInnerAuthTypeCHAP:
+	if (eapttls_chap(plugin) == FALSE) {
+	    /* do something */
+	}
+	break;
+    case kInnerAuthTypeMSCHAP:
+	if (eapttls_mschap(plugin) == FALSE) {
+	    /* do something */
+	}
+	break;
+    case kInnerAuthTypeEAP:
+	if (eapttls_eap_start(plugin, identifier) == FALSE) {
+	    /* do something */
+	}
+	break;
+    default:
+    case kInnerAuthTypeMSCHAPv2:
+	if (eapttls_mschap2(plugin) == FALSE) {
+	    /* do something */
+	}
+	break;
+    }
+    return (EAPTLSPacketCreate(kEAPCodeResponse,
+			       kEAPTypeTTLS,
+			       identifier,
+			       context->mtu,
+			       write_buf,
+			       &context->last_write_size));
+}
+
+static EAPPacketRef
 eapttls_start_inner_auth(EAPClientPluginDataRef plugin,
 			 int identifier, EAPClientStatus * client_status)
 {
     EAPTTLSPluginDataRef	context = (EAPTTLSPluginDataRef)plugin->private;
     memoryBufferRef		write_buf = &context->write_buffer; 
 
-    context->authentication_started = TRUE;
     if (context->session_was_resumed == FALSE) {
-	switch (context->inner_auth_type) {
-	case kInnerAuthTypePAP:
-	    if (eapttls_pap(plugin) == FALSE) {
-		/* do something */
-	    }
-	    break;
-	case kInnerAuthTypeCHAP:
-	    if (eapttls_chap(plugin) == FALSE) {
-		/* do something */
-	    }
-	    break;
-	case kInnerAuthTypeMSCHAP:
-	    if (eapttls_mschap(plugin) == FALSE) {
-		/* do something */
-	    }
-	    break;
-	case kInnerAuthTypeEAP:
-	    if (eapttls_eap_start(plugin, identifier) == FALSE) {
-		/* do something */
-	    }
-	    break;
-	default:
-	case kInnerAuthTypeMSCHAPv2:
-	    if (eapttls_mschap2(plugin) == FALSE) {
-		/* do something */
-	    }
-	    break;
-	}
+	return (eapttls_do_inner_auth(plugin, identifier, client_status));
     }
     return (EAPTLSPacketCreate(kEAPCodeResponse,
 			       kEAPTypeTTLS,
@@ -953,14 +965,6 @@ eapttls_verify_server(EAPClientPluginDataRef plugin,
     EAPPacketRef		pkt = NULL;
     memoryBufferRef		write_buf = &context->write_buffer;
 
-    if (context->last_trusted_server_certs != NULL
-	&& context->server_certs != NULL
-	&& EAPSecCertificateListEqual(context->last_trusted_server_certs,
-				      context->server_certs)) {
-	/* user already said OK to this cert chain */
-	context->trust_proceed = TRUE;
-	return (NULL);
-    }
     context->trust_status
 	= EAPTLSVerifyServerCertificateChain(plugin->properties, 
 					     context->server_certs,
@@ -973,16 +977,10 @@ eapttls_verify_server(EAPClientPluginDataRef plugin,
     }
     switch (context->trust_status) {
     case kEAPClientStatusOK:
+	eapttls_compute_session_key(context);
 	context->trust_proceed = TRUE;
-	my_CFRelease(&context->last_trusted_server_certs);
-	context->last_trusted_server_certs = CFRetain(context->server_certs);
 	break;
-    case kEAPClientStatusUnknownRootCertificate:
-    case kEAPClientStatusNoRootCertificate:
-    case kEAPClientStatusCertificateExpired:
-    case kEAPClientStatusCertificateNotYetValid:
-    case kEAPClientStatusServerCertificateNotTrusted:
-    case kEAPClientStatusCertificateRequiresConfirmation:
+    case kEAPClientStatusUserInputRequired:
 	/* ask user whether to proceed or not */
 	*client_status = context->last_client_status 
 	    = kEAPClientStatusUserInputRequired;
@@ -1078,7 +1076,6 @@ eapttls_handshake(EAPClientPluginDataRef plugin,
     case noErr:
 	/* handshake complete, tunnel established */
 	context->handshake_complete = TRUE;
-	eapttls_compute_session_key(context);
 	eapttls_set_session_was_resumed(context);
 	my_CFRelease(&context->server_certs);
 	(void)EAPSSLCopyPeerCertificates(context->ssl_context,
@@ -1203,7 +1200,7 @@ eapttls_request(EAPClientPluginDataRef plugin,
 	if (type != kRequestTypeStart) {
 	    /* ignore it: XXX should this be an error? */
 	    syslog(LOG_NOTICE, 
-		   "eapttls_request: ignoring non EAP/TLS start frame");
+		   "eapttls_request: ignoring non TTLS start frame");
 	    goto done;
 	}
 	status = SSLHandshake(context->ssl_context);
@@ -1253,9 +1250,24 @@ eapttls_request(EAPClientPluginDataRef plugin,
 	    context->last_write_size = 0;
 	}
 	if (type != kRequestTypeData) {
-	    syslog(LOG_NOTICE, "eapttls_request: unexpected %s frame",
-		   type == kRequestTypeAck ? "Ack" : "Start");
-	    goto done;
+	    EAPTTLSPluginDataRef context;
+
+	    context = (EAPTTLSPluginDataRef)plugin->private;
+	    if (ssl_state != kSSLConnected
+		|| context->session_was_resumed == FALSE
+		|| context->trust_proceed == FALSE
+		|| context->authentication_started == TRUE) {
+		syslog(LOG_NOTICE, "eapttls_request: unexpected %s frame",
+		       type == kRequestTypeAck ? "Ack" : "Start");
+		goto done;
+	    }
+	    /* server is forcing us to re-auth even though we resumed */
+	    syslog(LOG_NOTICE,
+		   "eapttls_request: server forcing re-auth after resume");
+	    eaptls_out
+		= eapttls_do_inner_auth(plugin, eaptls_in->identifier,
+					client_status);
+	    break;
 	}
 	if (read_buf->data == NULL) {
 	    read_buf->data = malloc(tls_message_length);
@@ -1366,11 +1378,14 @@ eapttls_process(EAPClientPluginDataRef plugin,
  done:
     if (context->plugin_state == kEAPClientStateFailure) {
 	if (context->last_ssl_error == noErr) {
-	    if (context->last_client_status == kEAPClientStatusOK) {
+	    switch (context->last_client_status) {
+	    case kEAPClientStatusOK:
+	    case kEAPClientStatusUserInputRequired:
 		*client_status = kEAPClientStatusFailed;
-	    }
-	    else {
+		break;
+	    default:
 		*client_status = context->last_client_status;
+		break;
 	    }
 	}
 	else {
@@ -1431,8 +1446,7 @@ eapttls_require_props(EAPClientPluginDataRef plugin)
 	array = CFArrayCreate(NULL, (const void **)&str,
 			      1, &kCFTypeArrayCallBacks);
     }
-    else if (context->authentication_started == FALSE
-	     && plugin->password == NULL) {
+    else if (plugin->password == NULL) {
 	CFStringRef	str = kEAPClientPropUserPassword;
 	array = CFArrayCreate(NULL, (const void **)&str,
 			      1, &kCFTypeArrayCallBacks);
