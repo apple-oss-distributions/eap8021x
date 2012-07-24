@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2001-2010 Apple Inc. All rights reserved.
+ * Copyright (c) 2001-2012 Apple Inc. All rights reserved.
  *
  * @APPLE_LICENSE_HEADER_START@
  * 
@@ -103,6 +103,11 @@ static int				S_mtu;
 #define kEnablePreauthentication	CFSTR("EnablePreauthentication")
 #define kNumberOfScans			CFSTR("NumberOfScans")
 
+/* testing tunables */
+#define kTesting			CFSTR("Testing")
+#define kTransmitPacketLossPercent	CFSTR("TransmitPacketLossPercent")
+#define kReceivePacketLossPercent	CFSTR("ReceivePacketLossPercent")
+
 /* 
  * Static: S_enable_preauth
  * 
@@ -162,6 +167,15 @@ static int	S_number_of_scans = NUMBER_OF_SCANS;
  */
 static bool	S_debug = FALSE;
 
+/*
+ * Static: S_transmit_loss_percent, S_receive_loss_percent
+ * Purpose:
+ *   When set, used to simulate packet loss with the given packet loss
+ *   percentage.
+ */
+static int 	S_transmit_loss_percent;
+static int 	S_receive_loss_percent;
+
 struct EAPOLSocket_s;
 
 TAILQ_HEAD(EAPOLSocketHead_s, EAPOLSocket_s);
@@ -177,6 +191,7 @@ struct EAPOLSocketSource_s {
     bool				is_wpa_enterprise;
     bool				link_active;
     bool				authenticated;
+    bool				need_force_renew;
     InterestNotificationRef		interest;
     struct ether_addr			authenticator_mac;
     bool				authenticator_mac_valid;
@@ -205,6 +220,8 @@ struct EAPOLSocket_s {
     EAPOLSocketSourceRef		source;
     SupplicantRef			supp;
     bool				remove;
+    EAPPacketRef			eap_tx_packet;
+    int					eap_tx_packet_length;
     TAILQ_ENTRY(EAPOLSocket_s)		link;
 };
 
@@ -255,7 +272,7 @@ S_get_plist_boolean(CFDictionaryRef plist, CFStringRef key, boolean_t def)
     boolean_t		ret = def;
 
     b = isA_CFBoolean(CFDictionaryGetValue(plist, key));
-    if (b) {
+    if (b != NULL) {
 	ret = CFBooleanGetValue(b);
     }
     if (eapolclient_should_log(kLogFlagTunables)) {
@@ -270,24 +287,54 @@ S_get_plist_boolean(CFDictionaryRef plist, CFStringRef key, boolean_t def)
 
 
 static int
-S_get_plist_int(CFDictionaryRef plist, CFStringRef key, int def)
+S_get_plist_int_log(CFDictionaryRef plist, CFStringRef key, int def,
+		    bool should_log)
 {
     CFNumberRef 	n;
     int			ret = def;
 
     n = isA_CFNumber(CFDictionaryGetValue(plist, key));
-    if (n) {
+    if (n != NULL) {
 	if (CFNumberGetValue(n, kCFNumberIntType, &ret) == FALSE) {
 	    ret = def;
 	}
     }
-    if (eapolclient_should_log(kLogFlagTunables)) {
+    if (should_log && eapolclient_should_log(kLogFlagTunables)) {
 	FILE *	log_file = eapolclient_log_file();
 
 	SCPrint(TRUE, log_file, CFSTR("%@ = %d\n"), key, ret);
 	fflush(log_file);
     }
     return (ret);
+}
+
+__private_extern__ int
+get_plist_int(CFDictionaryRef plist, CFStringRef key, int def)
+{
+    return (S_get_plist_int_log(plist, key, def, TRUE));
+}
+
+/*
+ * Function: S_simulated_event_occurred
+ * Purpose:
+ *   Given the rate of occurrence of the event in 'percent', return
+ *   whether the simulated event has occurred.
+ * Returns:
+ *   true if the event occurred, false otherwise.
+ */
+static bool
+S_simulated_event_occurred(int percent)
+{
+    u_int32_t	value;
+
+    if (percent == 0) {
+	return (false);
+    }
+    value = arc4random() / (UINT32_MAX / 100);
+    if (value < percent) {
+	return (true);
+    }
+    return (false);
 }
 
 void
@@ -322,18 +369,70 @@ EAPOLSocketSetGlobals(SCPreferencesRef prefs)
 	S_enable_preauth
 	    = S_get_plist_boolean(plist, kEnablePreauthentication,
 				  FALSE);
-	S_scan_delay_authenticated_secs
-	    = S_get_plist_int(plist, kScanDelayAuthenticatedSeconds,
-			      SCAN_DELAY_AUTHENTICATED_SECS);
-	S_scan_delay_roam_secs
-	    = S_get_plist_int(plist, kScanDelayRoamSeconds,
-			      SCAN_DELAY_ROAM_SECS);
-	S_scan_period_secs
-	    = S_get_plist_int(plist, kScanPeriodSeconds,
-			      SCAN_PERIOD_SECS);
-	S_number_of_scans
-	    = S_get_plist_int(plist, kNumberOfScans,
-			      NUMBER_OF_SCANS);
+	if (S_enable_preauth) {
+	    S_scan_delay_authenticated_secs
+		= get_plist_int(plist, kScanDelayAuthenticatedSeconds,
+				SCAN_DELAY_AUTHENTICATED_SECS);
+	    S_scan_delay_roam_secs
+		= get_plist_int(plist, kScanDelayRoamSeconds,
+				SCAN_DELAY_ROAM_SECS);
+	    S_scan_period_secs
+		= get_plist_int(plist, kScanPeriodSeconds,
+				SCAN_PERIOD_SECS);
+	    S_number_of_scans
+		= get_plist_int(plist, kNumberOfScans,
+				NUMBER_OF_SCANS);
+	}
+    }
+
+    plist = SCPreferencesGetValue(prefs, kTesting);
+    if (isA_CFDictionary(plist) != NULL) {
+	S_transmit_loss_percent 
+	    = S_get_plist_int_log(plist, kTransmitPacketLossPercent, 0, FALSE);
+	if (S_transmit_loss_percent != 0) {
+	    eapolclient_log(kLogFlagBasic,
+			    "Will simulate %d%% transmit packet loss\n",
+			    S_transmit_loss_percent);
+	    my_log(LOG_NOTICE,
+		   "Will simulate %d%% transmit packet loss",
+		   S_transmit_loss_percent);
+	}
+	S_receive_loss_percent
+	    = S_get_plist_int_log(plist, kReceivePacketLossPercent, 0, FALSE);
+	if (S_receive_loss_percent != 0) {
+	    eapolclient_log(kLogFlagBasic,
+			    "Will simulate %d%% receive packet loss\n",
+			    S_receive_loss_percent);
+	    my_log(LOG_NOTICE,
+		   "Will simulate %d%% receive packet loss",
+		   S_receive_loss_percent);
+	}
+    }
+    return;
+}
+
+/*
+ * Function: EAPOLSocketSetEAPTxPacket
+ * Purpose:
+ *   Set the last EAP transmit packet.
+ *   If 'pkt' is NULL, then just clear the old packet that may be there.
+ *   If 'pkt' is not NULL, clear the old packet, and make a copy of the
+ *   new packet and save it.
+ */
+static void
+EAPOLSocketSetEAPTxPacket(EAPOLSocketRef sock, EAPPacketRef pkt, int length)
+{
+    if (sock->eap_tx_packet != NULL) {
+	free(sock->eap_tx_packet);
+    }
+    if (pkt == NULL) {
+	sock->eap_tx_packet = NULL;
+	sock->eap_tx_packet_length = 0;
+    }
+    else {
+	sock->eap_tx_packet = (EAPPacketRef)malloc(length);
+	bcopy(pkt, sock->eap_tx_packet, length);
+	sock->eap_tx_packet_length = length;
     }
     return;
 }
@@ -412,6 +511,7 @@ EAPOLSocketFree(EAPOLSocketRef * sock_p)
 	    TAILQ_REMOVE(&source->preauth_sockets, sock, link);
 	    source->preauth_sockets_count--;
 	}
+	EAPOLSocketSetEAPTxPacket(sock, NULL, 0);
 	free(sock);
     }
     *sock_p = NULL;
@@ -424,7 +524,7 @@ EAPOLSocketSetKey(EAPOLSocketRef sock, wirelessKeyType type,
 {
 #ifdef NO_WIRELESS
     return (FALSE);
-#else NO_WIRELESS
+#else /* NO_WIRELESS */
     if (sock->source->is_wireless == FALSE) {
 	return (FALSE);
     }
@@ -437,7 +537,7 @@ EAPOLSocketGetSSID(EAPOLSocketRef sock)
 {
 #ifdef NO_WIRELESS
     return (NULL);
-#else NO_WIRELESS
+#else /* NO_WIRELESS */
     if (sock->source->is_wireless == FALSE) {
 	return (NULL);
     }
@@ -488,6 +588,12 @@ EAPOLSocketTransmit(EAPOLSocketRef sock,
 		    EAPOLPacketType packet_type,
 		    void * body, unsigned int body_length)
 {
+    if (packet_type == kEAPOLPacketTypeEAPPacket) {
+	EAPOLSocketSetEAPTxPacket(sock, body, body_length);
+    }
+    else {
+	EAPOLSocketSetEAPTxPacket(sock, NULL, 0);
+    }
     return (EAPOLSocketSourceTransmit(sock->source, sock, packet_type,
 				      body, body_length));
 }
@@ -509,8 +615,9 @@ EAPOLSocketClearPMKCache(EAPOLSocketRef sock)
 }
 
 boolean_t
-EAPOLSocketSetPMK(EAPOLSocketRef sock, 
-		  const uint8_t * key, int key_length)
+EAPOLSocketSetWPAKey(EAPOLSocketRef sock, 
+		     const uint8_t * session_key, int session_key_length,
+		     const uint8_t * server_key, int server_key_length)
 {
 #ifdef NO_WIRELESS
     return (FALSE);
@@ -524,7 +631,7 @@ EAPOLSocketSetPMK(EAPOLSocketRef sock,
     if (source->sock == sock) {
 	/* main supplicant */
 	bssid = NULL;
-	if (key_length != 0 && source->authenticated == FALSE) {
+	if (session_key_length != 0) {
 	    EAPOLSocketSourceScheduleHandshakeNotification(source);
 	}
 	else {
@@ -538,14 +645,18 @@ EAPOLSocketSetPMK(EAPOLSocketRef sock,
     }
     if (eapolclient_should_log(kLogFlagBasic)) {
 	if (bssid == NULL) {
-	    eapolclient_log(kLogFlagBasic, "set_key %d\n", key_length);
+	    eapolclient_log(kLogFlagBasic, "set_key %d/%d\n",
+			    session_key_length, server_key_length);
 	}
 	else {
-	    eapolclient_log(kLogFlagBasic, "set_key %s %d\n",
-			    ether_ntoa(bssid), key_length);
+	    eapolclient_log(kLogFlagBasic, 
+			    "set_key %s %d/%d\n", ether_ntoa(bssid),
+			    session_key_length, server_key_length);
 	}
     }
-    return (wireless_set_wpa_pmk(source->wref, bssid, key, key_length));
+    return (wireless_set_wpa_key(source->wref, bssid,
+				 session_key, session_key_length,
+				 server_key, server_key_length));
 #endif /* NO_WIRELESS */
 }
 
@@ -685,6 +796,28 @@ EAPOLSocketStopClient(EAPOLSocketRef sock)
 	wireless_disassociate(source->wref);
     }
     return;
+}
+
+boolean_t
+EAPOLSocketReassociate(EAPOLSocketRef sock)
+{
+    boolean_t			ret;
+    CFDictionaryRef		scan_record;
+    EAPOLSocketSourceRef	source = sock->source;
+
+    if (EAPOLSocketIsWireless(sock) == FALSE) {
+	return (FALSE);
+    }
+    if (EAPOLSocketIsMain(sock) == FALSE) {
+	return (FALSE);
+    }
+    scan_record = wireless_copy_scan_record(source->if_name, source->store);
+    if (scan_record == NULL) {
+	return (FALSE);
+    }
+    ret = wireless_reassociate(source->wref, scan_record);
+    CFRelease(scan_record);
+    return (ret);
 }
 
 /**
@@ -917,6 +1050,10 @@ EAPOLSocketSourceLinkStatusChanged(SCDynamicStoreRef session,
 
     /* let the 802.1X Supplicant know about the link status change */
     if (source->sock != NULL) {
+	if (source->link_active == FALSE) {
+	    /* toss last packet in case the Authenticator re-uses identifier */
+	    EAPOLSocketSetEAPTxPacket(source->sock, NULL, 0);
+	}
 	Supplicant_link_status_changed(source->sock->supp, source->link_active);
     }
     return;
@@ -980,8 +1117,6 @@ EAPOLSocketSourceReceive(void * arg1, void * arg2)
 		EAPOLSocketSourceUpdateWirelessInfo(source);
 	    }
 	}
-	else {
-	}
     }
     rx = &source->rx;
     rx->length = length;
@@ -1010,8 +1145,43 @@ EAPOLSocketSourceReceive(void * arg1, void * arg2)
 						    (const struct ether_addr *)
 						    eh_p->ether_shost);
     }
-    if (sock != NULL && sock->func != NULL) {
-	(*sock->func)(sock->arg1, sock->arg2, rx);
+    if (sock != NULL) {
+	EAPRequestPacketRef	req_p;
+	bool			retransmit = FALSE;
+
+	req_p = (EAPRequestPacketRef)eapol_p->body;
+	if (sock->eap_tx_packet != NULL) {
+	    if (eapol_p->packet_type == kEAPOLPacketTypeEAPPacket
+		&& req_p->code == kEAPCodeRequest
+		&& req_p->identifier == sock->eap_tx_packet->identifier) {
+		retransmit = TRUE;
+	    }
+	    else {
+		EAPOLSocketSetEAPTxPacket(sock, NULL, 0);
+	    }
+	}
+	if (retransmit) {
+	    eapolclient_log(kLogFlagBasic,
+			    "Retransmit EAP packet %d bytes\n",
+			    sock->eap_tx_packet_length);
+	    EAPOLSocketSourceTransmit(sock->source, sock,
+				      kEAPOLPacketTypeEAPPacket,
+				      sock->eap_tx_packet,
+				      sock->eap_tx_packet_length);
+	}
+	else if (S_receive_loss_percent != 0 
+		 && S_simulated_event_occurred(S_receive_loss_percent)) {
+	    /* drop the packet */
+	    eapolclient_log(kLogFlagBasic,
+			    "Simulate receive packet loss: dropping %d bytes\n",
+			    length);
+	    my_log(LOG_NOTICE,
+		   "Simulate receive packet loss: dropping %d bytes",
+		   length);
+	}
+	else if (sock->func != NULL) {
+	    (*sock->func)(sock->arg1, sock->arg2, rx);
+	}
     }
     rx->eapol_p = NULL;
     if (S_debug) {
@@ -1126,8 +1296,17 @@ EAPOLSocketSourceTransmit(EAPOLSocketSourceRef source,
 			ntohs(eh_p->ether_type),
 			ether_ntoa((void *)eh_p->ether_dhost));
     }
-    if (sendto(FDHandler_fd(source->handler), eh_p, size, 
-	       0, (struct sockaddr *)&ndrv, sizeof(ndrv)) < size) {
+    if (S_transmit_loss_percent != 0 
+	&& S_simulated_event_occurred(S_transmit_loss_percent)) {
+	eapolclient_log(kLogFlagBasic,
+			"Simulate transmit packet loss: dropping %d bytes\n",
+			body_length);
+	my_log(LOG_NOTICE,
+	       "Simulate transmit packet loss: dropping %d bytes",
+	       body_length);
+    }
+    else if (sendto(FDHandler_fd(source->handler), eh_p, size,
+		    0, (struct sockaddr *)&ndrv, sizeof(ndrv)) < size) {
 	my_log(LOG_NOTICE, "EAPOLSocketSourceTransmit: sendto failed, %s",
 	       strerror(errno));
 	return (-1);
@@ -1338,7 +1517,7 @@ EAPOLSocketSourceUpdateWirelessInfo(EAPOLSocketSourceRef source)
 {
 #ifdef NO_WIRELESS
     return (FALSE);
-#else NO_WIRELESS
+#else /* NO_WIRELESS */
     struct ether_addr	ap_mac;
     bool 		ap_mac_valid = FALSE;
     bool		changed = FALSE;
@@ -1690,8 +1869,16 @@ EAPOLSocketSourceHandshakeComplete(InterestNotificationRef interest_p,
 
     eapolclient_log(kLogFlagBasic, "4-way handshake complete\n");
     supplicant_state = Supplicant_get_state(source->sock->supp, &client_status);
-    if (supplicant_state == kSupplicantStateAuthenticated) {
-	EAPOLSocketSourceForceRenew(source);
+    switch (supplicant_state) {
+    case kSupplicantStateAuthenticated:
+	if (source->need_force_renew) {
+	    EAPOLSocketSourceForceRenew(source);
+	}
+	break;
+    case kSupplicantStateAuthenticating:
+	/* if we're still authenticating, we likely lost the EAP Success */
+	Supplicant_simulate_success(source->sock->supp);
+	break;
     }
     EAPOLSocketSourceReleaseHandshakeNotification(source);
     return;
@@ -1706,6 +1893,13 @@ EAPOLSocketSourceScheduleHandshakeNotification(EAPOLSocketSourceRef source)
 				     EAPOLSocketSourceHandshakeComplete,
 				     source);
     if (source->interest != NULL) {
+	if (source->authenticated == FALSE) {
+	    /* only need force renew the first time after the link goes up */
+	    source->need_force_renew = TRUE;
+	}
+	else {
+	    source->need_force_renew = FALSE;
+	}
 	source->authenticated = TRUE;
 	eapolclient_log(kLogFlagBasic,
 			"4-way handshake notification scheduled\n");
