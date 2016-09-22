@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2001-2013 Apple Inc. All rights reserved.
+ * Copyright (c) 2001-2016 Apple Inc. All rights reserved.
  *
  * @APPLE_LICENSE_HEADER_START@
  * 
@@ -39,6 +39,7 @@
 #include <unistd.h>
 #include <TargetConditionals.h>
 #include <Security/SecItem.h>
+#include <Security/SecItemPriv.h>
 #if ! TARGET_OS_EMBEDDED
 #include <Security/SecIdentitySearch.h>
 #include <Security/SecKeychain.h>
@@ -60,6 +61,7 @@
 #include <Security/SecCertificate.h>
 #include <Security/SecCertificatePriv.h>
 #include <Security/SecTrust.h>
+#include <Security/SecPolicyPriv.h>
 #include <CoreFoundation/CFDictionary.h>
 #include <CoreFoundation/CFString.h>
 #include <CoreFoundation/CFNumber.h>
@@ -206,7 +208,8 @@ IdentityCreateFromData(CFDataRef data, SecIdentityRef * ret_identity)
     const void *		keys[] = {
 	kSecClass,
 	kSecReturnRef,
-	kSecValuePersistentRef
+	kSecValuePersistentRef,
+	kSecUseSystemKeychain
     };
     CFDictionaryRef		query;
     CFTypeRef			results = NULL;
@@ -214,7 +217,8 @@ IdentityCreateFromData(CFDataRef data, SecIdentityRef * ret_identity)
     const void *		values[] = {
 	kSecClassIdentity,
 	kCFBooleanTrue,
-	data
+	data,
+	kCFBooleanTrue
     };
 
     *ret_identity = NULL;
@@ -284,15 +288,14 @@ EAPSecIdentityCreateCertificateTrustChain(SecIdentityRef identity,
     SecCertificateRef		cert;
     CFArrayRef 			certs;
     SecPolicyRef		policy = NULL;
-    OSStatus			status;
+    OSStatus			status = noErr;
     SecTrustRef 		trust = NULL;
     SecTrustResultType 		trust_result;
 
     *ret_chain = NULL;
-    status = EAPSecPolicyCopy(&policy);
-    if (status != noErr) {
-	EAPLOG_FL(LOG_NOTICE, "EAPSecPolicyCopy failed: %s (%d)",
-		  EAPSecurityErrorString(status), (int)status);
+    policy = SecPolicyCreateEAP(TRUE, NULL);
+    if (policy == NULL) {
+	EAPLOG_FL(LOG_NOTICE, "SecPolicyCreateEAP failed");
 	goto done;
     }
     status = SecIdentityCopyCertificate(identity, &cert);
@@ -323,6 +326,7 @@ EAPSecIdentityCreateCertificateTrustChain(SecIdentityRef identity,
 
 	if (count == 0) {
 	    EAPLOG_FL(LOG_NOTICE, "SecTrustGetCertificateCount returned 0");
+	    status = errSecParam;
 	    goto done;
 	}
 	array = CFArrayCreateMutable(NULL, count, &kCFTypeArrayCallBacks);
