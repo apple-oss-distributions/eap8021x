@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2013 Apple Inc. All rights reserved.
+ * Copyright (c) 2008-2017 Apple Inc. All rights reserved.
  *
  * @APPLE_LICENSE_HEADER_START@
  * 
@@ -27,6 +27,8 @@
  */
 
 #include "EAPSIMAKAUtil.h"
+#include "EAPClientTypes.h"
+#include "SIMAccess.h"
 #include <stddef.h>
 #include <stdlib.h>
 #include "EAPLog.h"
@@ -39,6 +41,8 @@
 #include "myCFUtil.h"
 #include <string.h>
 #include <CommonCrypto/CommonHMAC.h>
+#include <corecrypto/cc.h>
+#include <CoreTelephony/CTServerConnectionSubscriber.h>
 
 /* 
  * Modification History
@@ -166,6 +170,9 @@ ATNotificationCodeGetString(uint16_t code)
     case kATNotificationCodeGeneralFailureBeforeAuthentication:
 	str = "General Failure Before Authentication";
 	break;
+    case kATNotificationCodeIdentityDecryptionFailureBeforeAuthentication:
+	str = "Identity Decryption Failure Before Authentication";
+	break;
     case kATNotificationCodeSuccess:
 	str = "Success";
 	break;
@@ -249,6 +256,9 @@ EAPSIMAKAStatusForATNotificationCode(uint16_t notification_code)
     case kATNotificationCodeGeneralFailureBeforeAuthentication:
 	status = kEAPSIMAKAStatusFailureBeforeAuthentication;
 	break;
+    case kATNotificationCodeIdentityDecryptionFailureBeforeAuthentication:
+	status = kEAPClientStatusIdentityDecryptionError;
+	break;
     case kATNotificationCodeSuccess:
 	status = kEAPSIMAKAStatusOK;
 	break;
@@ -318,7 +328,7 @@ EAPSIMAKAKeyInfoVerifyMAC(EAPSIMAKAKeyInfoRef key_info,
     uint8_t		hash[CC_SHA1_DIGEST_LENGTH];
 
     EAPSIMAKAKeyInfoComputeMAC(key_info, pkt, mac_p, extra, extra_length, hash);
-    return (bcmp(hash, mac_p, MAC_SIZE) == 0);
+    return (cc_cmp_safe(MAC_SIZE, hash, mac_p) == 0);
 }
 
 PRIVATE_EXTERN void
@@ -593,6 +603,99 @@ EAPSIMAKAIdentityTypeGetAttributeType(CFStringRef string)
 	}
     }
     return (type);
+}
+
+PRIVATE_EXTERN EAPSIMAKAEncryptedIdentityInfoRef
+EAPSIMAKAInitEncryptedIdentityInfo(CFDictionaryRef properties, bool static_config)
+{
+    EAPSIMAKAEncryptedIdentityInfoRef	encrypted_identity_info = NULL;
+    CFDataRef				encrypted_identity = NULL;
+    CFStringRef				anonymous_username = NULL;
+    CFStringRef				anonymous_identity = NULL;
+
+    if (static_config) {
+	CFBooleanRef b = isA_CFBoolean(CFDictionaryGetValue(properties, kEAPClientPropEAPSIMAKAEncryptedIdentityEnabled));
+	if (b != NULL) {
+	    bool encryption_enabled = CFBooleanGetValue(b);
+	    if (encryption_enabled) {
+		CFStringRef realm = isA_CFString(CFDictionaryGetValue(properties,
+								      kEAPClientPropEAPSIMAKARealm));
+		encrypted_identity = isA_CFData(CFDictionaryGetValue(properties,
+								     kEAPClientPropEAPSIMAKAEncryptedUsername));
+		if (encrypted_identity == NULL) {
+		    return NULL;
+		}
+		CFRetain(encrypted_identity);
+		anonymous_username = isA_CFString(CFDictionaryGetValue(properties,
+									 kEAPClientPropEAPSIMAKAAnonymousUserName));
+		if (anonymous_username == NULL) {
+		    anonymous_username = CFStringCreateCopy(NULL, EAP_SIM_AKA_DEFAULT_ANONYM_USERNAME);
+		} else {
+		    CFRetain(anonymous_username);
+		}
+		if (realm != NULL) {
+		    anonymous_identity = CFStringCreateWithFormat(NULL, NULL, CFSTR("%@" "@" "%@"),
+							      anonymous_username, realm);
+		    my_CFRelease(&anonymous_username);
+		} else {
+		    anonymous_identity = anonymous_username;
+		}
+		goto done;
+	    }
+	}
+    }
+#if TARGET_OS_EMBEDDED
+	CFDictionaryRef info = SIMCopyEncryptedIMSIInfo(kEAPTypeEAPAKA);
+	if (info == NULL) {
+	    return NULL;
+	}
+	/* encrypted_identity = "\0|<base64<encryption<IMSI>>>|<nai realm>" */
+	encrypted_identity = isA_CFData(CFDictionaryGetValue(info, kCTEncryptedIdentity));
+	if (encrypted_identity == NULL) {
+	    my_CFRelease(&info);
+	    return NULL;
+	}
+	CFRetain(encrypted_identity);
+	anonymous_username = isA_CFString(CFDictionaryGetValue(info, kCTIdentityAnonymousUserName));
+	if (anonymous_username == NULL) {
+	    anonymous_username = CFStringCreateCopy(NULL, EAP_SIM_AKA_DEFAULT_ANONYM_USERNAME);
+	} else {
+	    CFRetain(anonymous_username);
+	}
+	CFStringRef realm = SIMCopyRealm();
+	if (realm != NULL) {
+	    anonymous_identity = CFStringCreateWithFormat(NULL, NULL, CFSTR("%@" "@" "%@"),
+						anonymous_username,
+						realm);
+	    my_CFRelease(&anonymous_username);
+	} else {
+	    anonymous_identity = anonymous_username;
+	}
+	my_CFRelease(&realm);
+	my_CFRelease(&info);
+#endif /* TARGET_OS_EMBEDDED */
+
+done:
+    encrypted_identity_info = (EAPSIMAKAEncryptedIdentityInfoRef)malloc(sizeof(*encrypted_identity_info));
+    if (encrypted_identity_info == NULL) {
+	my_CFRelease(&encrypted_identity);
+	my_CFRelease(&anonymous_identity);
+	return NULL;
+    }
+    bzero(encrypted_identity_info, sizeof(*encrypted_identity_info));
+    encrypted_identity_info->encrypted_identity = encrypted_identity;
+    encrypted_identity_info->anonymous_identity = anonymous_identity;
+    return encrypted_identity_info;
+}
+
+PRIVATE_EXTERN void
+EAPSIMAKAClearEncryptedIdentityInfo(EAPSIMAKAEncryptedIdentityInfoRef info)
+{
+    if (info != NULL) {
+	my_CFRelease(&info->anonymous_identity);
+	my_CFRelease(&info->encrypted_identity);
+	free(info);
+    }
 }
 
 /**

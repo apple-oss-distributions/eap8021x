@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2012-2016 Apple Inc. All rights reserved.
+ * Copyright (c) 2012-2017 Apple Inc. All rights reserved.
  *
  * @APPLE_LICENSE_HEADER_START@
  * 
@@ -60,6 +60,10 @@ IMSIListRemoveMatches(EAPType type, IMSIMatchFuncRef iter,
 
 STATIC void
 EAPSIMAKAPersistentStatePurgePrefs(void);
+
+STATIC void
+EAPSIMAKAPersistentStateSetPseudonymAndTime(EAPSIMAKAPersistentStateRef persist,
+				     CFStringRef pseudonym, CFDateRef pseudonym_start_time);
 
 STATIC Boolean
 prefs_did_change(uint32_t * gen_p)
@@ -303,17 +307,41 @@ EAPSIMAKAPersistentStateGetPseudonym(EAPSIMAKAPersistentStateRef persist, CFDate
     return (persist->pseudonym);
 }
 
+PRIVATE_EXTERN Boolean
+EAPSIMAKAPersistentStateTemporaryUsernameAvailable(EAPSIMAKAPersistentStateRef persist)
+{
+    return (persist->pseudonym || persist->reauth_id);
+}
+
 PRIVATE_EXTERN void
 EAPSIMAKAPersistentStateSetPseudonym(EAPSIMAKAPersistentStateRef persist,
 				     CFStringRef pseudonym)
 {
+    EAPSIMAKAPersistentStateSetPseudonymAndTime(persist, pseudonym, NULL);
+}
+
+STATIC void
+EAPSIMAKAPersistentStateSetPseudonymAndTime(EAPSIMAKAPersistentStateRef persist,
+				     CFStringRef pseudonym, CFDateRef date)
+{
+    CFDateRef new_date = NULL;
+
     if (persist->identity_type == kAT_PERMANENT_ID_REQ) {
 	/* we don't need to remember this */
 	return;
     }
     my_FieldSetRetainedCFType(&persist->pseudonym, pseudonym);
+    if (pseudonym != NULL && date == NULL) {
+	new_date = CFDateCreate(NULL, CFAbsoluteTimeGetCurrent());
+	date = new_date;
+    }
+    my_FieldSetRetainedCFType(&persist->pseudonym_start_time, date);
+    if (new_date != NULL) {
+	CFRelease(new_date);
+    }
     return;
 }
+
 
 PRIVATE_EXTERN CFStringRef
 EAPSIMAKAPersistentStateGetReauthID(EAPSIMAKAPersistentStateRef persist)
@@ -377,6 +405,7 @@ EAPSIMAKAPersistentStateCreate(EAPType type, int master_key_size,
     if (identity_type != kAT_PERMANENT_ID_REQ) {
 	CFPropertyListRef	info;
 	CFStringRef		pseudonym = NULL;
+	CFDateRef		pseudonym_start_time = NULL;
 	uint32_t		mobile_gen_id;
 	CFNumberRef		num_gen_id = NULL;
 
@@ -420,7 +449,7 @@ EAPSIMAKAPersistentStateCreate(EAPType type, int master_key_size,
 							CFSTR("PseudonymID")));
 	    }
 	    if (pseudonym != NULL) {
-		persist->pseudonym_start_time
+		pseudonym_start_time
 		= CFDictionaryGetValue(dict,
 				       kPrefsPseudonymStartTime);
 	    }
@@ -458,7 +487,7 @@ EAPSIMAKAPersistentStateCreate(EAPType type, int master_key_size,
 	    pseudonym = (CFStringRef)info;
 	}
 	if (pseudonym != NULL) {
-	    EAPSIMAKAPersistentStateSetPseudonym(persist, pseudonym);
+	    EAPSIMAKAPersistentStateSetPseudonymAndTime(persist, pseudonym, pseudonym_start_time);
 	}
 	my_CFRelease(&info);
     }
@@ -483,6 +512,7 @@ EAPSIMAKAPersistentStateSave(EAPSIMAKAPersistentStateRef persist,
 			     CFStringRef ssid)
 {
     CFMutableDictionaryRef	info = NULL;
+    CFDateRef			pseudonym_start_time = NULL;
 
     if (persist->identity_type == kAT_PERMANENT_ID_REQ) {
 	/* don't need to store information */
@@ -493,8 +523,7 @@ EAPSIMAKAPersistentStateSave(EAPSIMAKAPersistentStateRef persist,
     IMSIListRemoveMatches(persist->type, IMSIDoesNotMatch, persist->imsi);
 
     /* Pseudonym */
-    if (EAPSIMAKAPersistentStateGetPseudonym(persist, NULL) != NULL) {
-	CFDateRef pseudonym_start_time = NULL;
+    if (EAPSIMAKAPersistentStateGetPseudonym(persist, &pseudonym_start_time) != NULL) {
 
 	info = CFDictionaryCreateMutable(NULL, 0,
 					 &kCFTypeDictionaryKeyCallBacks,
@@ -503,11 +532,8 @@ EAPSIMAKAPersistentStateSave(EAPSIMAKAPersistentStateRef persist,
 	CFDictionarySetValue(info, kPrefsPseudonym,
 			     EAPSIMAKAPersistentStateGetPseudonym(persist, NULL));
 
-	/* pseudonym expiry time */
-	pseudonym_start_time = CFDateCreate(NULL, CFAbsoluteTimeGetCurrent());
 	if (pseudonym_start_time != NULL) {
 	    CFDictionarySetValue(info, kPrefsPseudonymStartTime, pseudonym_start_time);
-	    CFRelease(pseudonym_start_time);
 	}
     }
 
