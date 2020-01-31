@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2006-2013 Apple Inc. All rights reserved.
+ * Copyright (c) 2006-2019 Apple Inc. All rights reserved.
  *
  * @APPLE_LICENSE_HEADER_START@
  * 
@@ -29,6 +29,7 @@
 #include <TargetConditionals.h>
 #include <CoreFoundation/CFString.h>
 #include <CoreFoundation/CFNumber.h>
+#include <Security/Security.h>
 #include "symbol_scope.h"
 #include "EAPLog.h"
 #include "EAPSecurity.h"
@@ -36,10 +37,10 @@
 #include "EAPKeychainUtilInternal.h"
 #include "myCFUtil.h"
 
-#if TARGET_OS_EMBEDDED
+#if TARGET_OS_IPHONE
 
 OSStatus
-EAPSecKeychainPasswordItemRemove(SecKeychainRef keychain,
+EAPSecKeychainPasswordItemRemove(__unused SecKeychainRef keychain,
 				 CFStringRef unique_id_str)
 {
     const void *	keys[] = {
@@ -68,7 +69,7 @@ EAPSecKeychainPasswordItemRemove(SecKeychainRef keychain,
 }
 
 OSStatus
-EAPSecKeychainPasswordItemCopy(SecKeychainRef keychain, 
+EAPSecKeychainPasswordItemCopy(__unused SecKeychainRef keychain,
 			       CFStringRef unique_id_str, 
 			       CFDataRef * ret_password)
 {
@@ -102,8 +103,8 @@ EAPSecKeychainPasswordItemCopy(SecKeychainRef keychain,
 }
 
 OSStatus
-EAPSecKeychainPasswordItemCreateWithAccess(SecKeychainRef keychain,
-					   SecAccessRef access,
+EAPSecKeychainPasswordItemCreateWithAccess(__unused SecKeychainRef keychain,
+					   EAPSecAccessRef access,
 					   CFStringRef unique_id_str,
 					   CFDataRef label,
 					   CFDataRef description,
@@ -135,7 +136,7 @@ EAPSecKeychainPasswordItemCreateWithAccess(SecKeychainRef keychain,
 }
 
 OSStatus
-EAPSecKeychainPasswordItemSet(SecKeychainRef keychain,
+EAPSecKeychainPasswordItemSet(__unused SecKeychainRef keychain,
 			      CFStringRef unique_id_str,
 			      CFDataRef password)
 {
@@ -187,7 +188,8 @@ EAPSecKeychainPasswordItemSet(SecKeychainRef keychain,
     return (status);
 }
 
-#else /* TARGET_OS_EMBEDDED */
+#else /* TARGET_OS_IPHONE */
+
 #include <Security/SecAccess.h>
 #include <Security/SecACL.h>
 #include <Security/SecTrustedApplication.h>
@@ -312,10 +314,11 @@ mySecKeychainAttributeListAddFromDict(mySecKeychainAttributeList * attr_list,
 PRIVATE_EXTERN OSStatus
 EAPSecAccessCreateWithTrustedApplications(CFArrayRef trusted_apps,
 					  CFDataRef label_data,
-					  SecAccessRef * ret_access)
+					  EAPSecAccessRef * ret_access)
 {
     CFStringRef		label = NULL;
     OSStatus		status;
+    SecAccessRef 	access = NULL;
         
     if (label_data != NULL) {
 	label = my_CFStringCreateWithData(label_data);
@@ -324,7 +327,8 @@ EAPSecAccessCreateWithTrustedApplications(CFArrayRef trusted_apps,
 	label = CFSTR("--unspecified--");
 	CFRetain(label);
     }
-    status = SecAccessCreate(label, trusted_apps, ret_access);
+    status = SecAccessCreate(label, trusted_apps, &access);
+    *ret_access = (EAPSecAccessRef)access;
     my_CFRelease(&label);
     return (status);
 }
@@ -445,9 +449,9 @@ KeychainPasswordItemCopy(SecKeychainRef keychain,
 			 CFStringRef unique_id_str,
 			 SecKeychainItemRef * ret_item)
 {
-    SecKeychainItemRef	item;
-    OSStatus		status;
-    CFDataRef		unique_id;
+    SecKeychainItemRef		item;
+    OSStatus			status;
+    CFDataRef			unique_id;
 
     unique_id = CFStringCreateExternalRepresentation(NULL,
 						     unique_id_str,
@@ -588,8 +592,8 @@ OSStatus
 EAPSecKeychainPasswordItemRemove(SecKeychainRef keychain,
 				 CFStringRef unique_id_str)
 {
-    SecKeychainItemRef	item;
-    OSStatus		status;
+    SecKeychainItemRef		item;
+    OSStatus			status;
 
     status = KeychainPasswordItemCopy(keychain, unique_id_str, &item);
     if (status != noErr) {
@@ -627,7 +631,7 @@ EAPSecKeychainPasswordItemCopy2(SecKeychainRef keychain,
 }
 
 OSStatus
-EAPSecKeychainPasswordItemCopy(SecKeychainRef keychain, 
+EAPSecKeychainPasswordItemCopy(SecKeychainRef keychain,
 			       CFStringRef unique_id_str, 
 			       CFDataRef * ret_password)
 {
@@ -661,7 +665,7 @@ EAPSecKeychainPasswordItemCopy(SecKeychainRef keychain,
 
 OSStatus
 EAPSecKeychainPasswordItemCreateWithAccess(SecKeychainRef keychain,
-					   SecAccessRef access,
+					   EAPSecAccessRef access,
 					   CFStringRef unique_id_str,
 					   CFDataRef label,
 					   CFDataRef description,
@@ -693,7 +697,7 @@ EAPSecKeychainPasswordItemCreateWithAccess(SecKeychainRef keychain,
 					      CFDataGetLength(password),
 					      CFDataGetBytePtr(password),
 					      keychain,
-					      access,
+					      (SecAccessRef)access,
 					      NULL);
     CFRelease(unique_id);
     return (status);
@@ -705,7 +709,7 @@ EAPSecKeychainPasswordItemCreate(SecKeychainRef keychain,
 				 CFDictionaryRef attrs)
 {
     CFBooleanRef		allow_root;
-    SecAccessRef		access = NULL;
+    EAPSecAccessRef		access = NULL;
     mySecKeychainAttributeList	attr_list;
     CFDataRef 			password;
     void *			password_data;
@@ -775,7 +779,7 @@ EAPSecKeychainPasswordItemCreate(SecKeychainRef keychain,
 						  password_length,
 						  password_data,
 						  keychain,
-						  access,
+						  (SecAccessRef)access,
 						  NULL);
     }
 
@@ -870,11 +874,11 @@ EAPSecKeychainPasswordItemSet2(SecKeychainRef keychain,
     return (status);
 }
 
-#endif /* TARGET_OS_EMBEDDED */
+#endif /* TARGET_OS_IPHONE */
 
 OSStatus
 EAPSecKeychainPasswordItemCreateUniqueWithAccess(SecKeychainRef keychain,
-						 SecAccessRef access,
+						 EAPSecAccessRef access,
 						 CFDataRef label,
 						 CFDataRef description,
 						 CFDataRef user,
@@ -906,9 +910,10 @@ EAPSecKeychainPasswordItemCreateUniqueWithAccess(SecKeychainRef keychain,
 
 #ifdef TEST_EAPKEYCHAINUTIL
 
-#if ! TARGET_OS_EMBEDDED
+#if ! TARGET_OS_IPHONE
+
 /*
- * Create a SecAccessRef with a custom form.
+ * Create a EAPSecAccessRef with a custom form.
  * Both the owner and the ACL set allow free access to root,
  * but nothing to anyone else.
  * NOTE: This is not the easiest way to build up CSSM data structures.
@@ -931,14 +936,14 @@ SecKeychainCopySystemKeychain(SecKeychainRef * ret_keychain)
     return (status);
 }
 
-#endif /* ! TARGET_OS_EMBEDDED */
+#endif /* ! TARGET_OS_IPHONE */
 
-#if TARGET_OS_EMBEDDED
+#if TARGET_OS_IPHONE
 #define SYS_OPT			" "
-#else /* TARGET_OS_EMBEDDED */
+#else /* TARGET_OS_IPHONE */
 #define SYS_OPT			" [system] "
 #define HAS_KEYCHAINS
-#endif /* TARGET_OS_EMBEDDED */
+#endif /* TARGET_OS_IPHONE */
 
 static void 
 usage(const char * progname)
@@ -1140,7 +1145,7 @@ main(int argc, const char *argv[])
 	break;
     }
     case kCommandCreate: {
-	SecAccessRef			access = NULL;
+	EAPSecAccessRef			access = NULL;
 	CFMutableDictionaryRef	attrs = NULL;
 	CFDataRef			data;
 	CFArrayRef			trusted_apps;

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2017 Apple Inc. All rights reserved.
+ * Copyright (c) 2002-2019 Apple Inc. All rights reserved.
  *
  * @APPLE_LICENSE_HEADER_START@
  * 
@@ -55,25 +55,26 @@
 #include <CoreFoundation/CFDictionary.h>
 #include <CoreFoundation/CFMachPort.h>
 #include <CoreFoundation/CFRunLoop.h>
-#if TARGET_OS_EMBEDDED
-#include <CoreTelephony/CTServerConnectionPriv.h>
+#if TARGET_OS_IPHONE
+#include <CoreTelephony/CTSimSupportStrings.h>
 #include <MobileWiFi/MobileWiFi.h>
-#endif
+#include "SIMAccessPrivate.h"
+#endif /* TARGET_OS_IPHONE */
 #include <SystemConfiguration/SCDPlugin.h>
 #include <TargetConditionals.h>
 #include <EAP8021X/myCFUtil.h>
 #include "controller.h"
 #include "server.h"
-#if ! TARGET_OS_EMBEDDED
+#if ! TARGET_OS_IPHONE
 #include <CoreFoundation/CFSocket.h>
 #include "EAPOLClientConfiguration.h"
 #include "EAPOLClientConfigurationPrivate.h"
 #include "EAPOLControlPrivate.h"
 #include "EAPOLControlTypesPrivate.h"
-#endif /* ! TARGET_OS_EMBEDDED */
-#if TARGET_OS_EMBEDDED
+#endif /* ! TARGET_OS_IPHONE */
+#if TARGET_OS_IPHONE
 #include "EAPOLSIMPrefsManage.h"
-#endif
+#endif /* TARGET_OS_IPHONE */
 #include "ClientControlInterface.h"
 #include "EAPOLControlTypes.h"
 #include "EAPClientProperties.h"
@@ -133,7 +134,7 @@ typedef struct eapolClient_s {
     CFDictionaryRef		user_input_dict;
 
     CFDictionaryRef		status_dict;
-#if ! TARGET_OS_EMBEDDED
+#if ! TARGET_OS_IPHONE
     CFDictionaryRef		loginwindow_config;
     CFSocketRef			eapol_sock;
     int				eapol_fd;
@@ -144,20 +145,21 @@ typedef struct eapolClient_s {
     struct ether_addr		authenticator_mac;
 
     bool			user_cancelled;	
-#endif /* ! TARGET_OS_EMBEDDED */
+#endif /* ! TARGET_OS_IPHONE */
 } eapolClient, *eapolClientRef;
 
-#if TARGET_OS_EMBEDDED
+#if TARGET_OS_IPHONE
+
 static __inline__ boolean_t
 is_console_user(uid_t check_uid)
 {
     return (TRUE);
 }
 
-static CTServerConnectionRef	S_ct_server_conn = NULL;
-static Boolean			S_wifi_power_state;
+static CFTypeRef        S_SIMAccessConnection = NULL;
+static Boolean          S_wifi_power_state;
 
-#else /* TARGET_OS_EMBEDDED */
+#else /* TARGET_OS_IPHONE */
 
 static void
 clear_loginwindow_config(eapolClientRef client)
@@ -248,7 +250,7 @@ S_profile_copy_itemID_dict(EAPOLClientProfileRef profile)
     CFRelease(itemID_dict);
     return (dict);
 }
-#endif /* TARGET_OS_EMBEDDED */
+#endif /* TARGET_OS_IPHONE */
 
 static int
 get_ifm_type(const char * name)
@@ -260,6 +262,7 @@ get_ifm_type(const char * name)
     int			s;
     int			ifm_type = 0;
     bool		supports_full_duplex = FALSE;
+    bool 		ifm_ulist_allocated = FALSE;
 
     s = socket(AF_INET, SOCK_DGRAM, 0);
     if (s < 0) {
@@ -280,6 +283,7 @@ get_ifm_type(const char * name)
     }
     if (ifm.ifm_count > media_static_count) {
 	ifm.ifm_ulist = (int *)malloc(ifm.ifm_count * sizeof(int));
+	ifm_ulist_allocated = TRUE;
     }
     else {
 	ifm.ifm_ulist = media_static;
@@ -299,6 +303,9 @@ get_ifm_type(const char * name)
     }
 
  done:
+    if (ifm_ulist_allocated) {
+	free(ifm.ifm_ulist);
+    }
     if (s >= 0) {
 	close(s);
     }
@@ -390,11 +397,11 @@ eapolClientAdd(const char * if_name, boolean_t is_wifi)
 						   kCFStringEncodingASCII);
     client->is_wifi = is_wifi;
     client->pid = -1;
-#if ! TARGET_OS_EMBEDDED
+#if ! TARGET_OS_IPHONE
     client->eapol_fd = -1;
     client->packet_identifier = BAD_IDENTIFIER;
     client->autodetect_can_start_system_mode = !is_wifi;
-#endif /* ! TARGET_OS_EMBEDDED */
+#endif /* ! TARGET_OS_IPHONE */
     LIST_INSERT_HEAD(S_clientHead_p, client, link);
     return (client);
 }
@@ -402,9 +409,9 @@ eapolClientAdd(const char * if_name, boolean_t is_wifi)
 void
 eapolClientRemove(eapolClientRef client)
 {
-#if ! TARGET_OS_EMBEDDED
+#if ! TARGET_OS_IPHONE
     clear_loginwindow_config(client);
-#endif /* ! TARGET_OS_EMBEDDED */
+#endif /* ! TARGET_OS_IPHONE */
     my_CFRelease(&client->if_name_cf);
     LIST_REMOVE(client, link);
     free(client);
@@ -424,10 +431,10 @@ eapolClientInvalidate(eapolClientRef client)
     client->console_user = FALSE;
     client->user_input_provided = FALSE;
     client->ports_provided = FALSE;
-#if ! TARGET_OS_EMBEDDED
+#if ! TARGET_OS_IPHONE
     client->packet_identifier = BAD_IDENTIFIER;
     client->using_global_system_profile = FALSE;
-#endif /* ! TARGET_OS_EMBEDDED */
+#endif /* ! TARGET_OS_IPHONE */
     my_CFRelease(&client->notification_key);
     my_CFRelease(&client->force_renew_key);
     if (client->notify_port != MACH_PORT_NULL) {
@@ -547,13 +554,15 @@ eapolClientForceRenew(eapolClientRef client)
 }
 
 
-#if TARGET_OS_EMBEDDED
+#if TARGET_OS_IPHONE
+
 static void
 eapolClientExited(eapolClientRef client, EAPOLControlMode mode)
 {
     return;
 }
-#else /* TARGET_OS_EMBEDDED */
+
+#else /* TARGET_OS_IPHONE */
 
 /**
  ** 802.1X socket monitoring routines
@@ -771,7 +780,7 @@ eapolClientExited(eapolClientRef client, EAPOLControlMode mode)
     return;
 }
 
-#endif /* TARGET_OS_EMBEDDED */
+#endif /* TARGET_OS_IPHONE */
 
 /**
  ** fork/exec eapolclient routines
@@ -811,16 +820,16 @@ exec_setup(pid_t pid, void * context)
 
     if (pid != 0) {
 	/* parent: clean up file descriptors */
-#if TARGET_OS_EMBEDDED
+#if TARGET_OS_IPHONE
 	close(ec_p->eapol_fd);
-#else /* TARGET_OS_EMBEDDED */
+#else /* TARGET_OS_IPHONE */
 	if (ec_p->client->eapol_fd == ec_p->eapol_fd) {
 	    eapolClientStopMonitoring(ec_p->client);
 	}
 	else {
 	    close(ec_p->eapol_fd);
 	}
-#endif /* TARGET_OS_EMBEDDED */
+#endif /* TARGET_OS_IPHONE */
 	return;
     }
 
@@ -846,11 +855,11 @@ exec_setup(pid_t pid, void * context)
 static int
 open_eapol_socket(eapolClientRef client)
 {
-#if ! TARGET_OS_EMBEDDED
+#if ! TARGET_OS_IPHONE
     if (client->eapol_fd != -1) {
 	return (client->eapol_fd);
     }
-#endif /* ! TARGET_OS_EMBEDDED */
+#endif /* ! TARGET_OS_IPHONE */
     return (eapol_socket(client->if_name,
 			 (get_ifm_type(client->if_name) 
 			  == IFM_IEEE80211)));
@@ -874,9 +883,9 @@ eapolClientStart(eapolClientRef client, uid_t uid, gid_t gid,
     int				status = 0;
     char			uid_str[32];
 
-#if ! TARGET_OS_EMBEDDED
+#if ! TARGET_OS_IPHONE
     client->user_cancelled = FALSE;
-#endif /* ! TARGET_OS_EMBEDDED */
+#endif /* ! TARGET_OS_IPHONE */
 
     bzero(&ec, sizeof(ec));
     ec.client = client;
@@ -911,10 +920,10 @@ eapolClientStart(eapolClientRef client, uid_t uid, gid_t gid,
 	    client->owner.uid = uid;
 	    client->owner.gid = gid;
 	    client->console_user = on_console;
-#if TARGET_OS_EMBEDDED
+#if TARGET_OS_IPHONE
 	    client->mode = kEAPOLControlModeUser;
 	    client->bootstrap = bootstrap;
-#else /* TARGET_OS_EMBEDDED */
+#else /* TARGET_OS_IPHONE */
 	    if (on_console == FALSE
 		&& uid == login_window_uid()) {
 		client->mode = kEAPOLControlModeLoginWindow;
@@ -924,7 +933,7 @@ eapolClientStart(eapolClientRef client, uid_t uid, gid_t gid,
 		client->bootstrap = bootstrap;
 		client->au_session = au_session;
 	    }
-#endif /* TARGET_OS_EMBEDDED */
+#endif /* TARGET_OS_IPHONE */
 	}
 	else {
 	    client->mode = kEAPOLControlModeSystem;
@@ -1079,7 +1088,7 @@ ControllerStart(if_name_t if_name, uid_t uid, gid_t gid,
 	    goto done;
 	}
     }
-#if TARGET_OS_EMBEDDED
+#if TARGET_OS_IPHONE
     /* automatically map all requests by root to the mobile user */
     if (uid == 0) {
 	static gid_t	mobile_gid = -1;
@@ -1106,7 +1115,7 @@ ControllerStart(if_name_t if_name, uid_t uid, gid_t gid,
 	    }
 	}
     }
-#endif /* TARGET_OS_EMBEDDED */    
+#endif /* TARGET_OS_IPHONE */
     status = eapolClientStart(client, uid, gid, config_dict, bootstrap,
 			      au_session);
  done:
@@ -1154,7 +1163,8 @@ eapolClientStop(eapolClientRef client)
 
 }
 
-#if ! TARGET_OS_EMBEDDED
+#if ! TARGET_OS_IPHONE
+
 static boolean_t
 S_get_plist_boolean(CFDictionaryRef plist, CFStringRef key, boolean_t def)
 {
@@ -1167,7 +1177,8 @@ S_get_plist_boolean(CFDictionaryRef plist, CFStringRef key, boolean_t def)
     }
     return (ret);
 }
-#endif /* ! TARGET_OS_EMBEDDED */
+
+#endif /* ! TARGET_OS_IPHONE */
 
 int
 ControllerStop(if_name_t if_name, uid_t uid, gid_t gid)
@@ -1180,12 +1191,12 @@ ControllerStop(if_name_t if_name, uid_t uid, gid_t gid)
 	status = ENOENT;
 	goto done;
     }
-#if TARGET_OS_EMBEDDED 
+#if TARGET_OS_IPHONE
     if (uid != 0 && uid != client->owner.uid) {
 	status = EPERM;
 	goto done;
     }
-#else /* TARGET_OS_EMBEDDED */
+#else /* TARGET_OS_IPHONE */
     if (uid != 0) {
 	if (uid != client->owner.uid) {
 	    if (client->mode == kEAPOLControlModeSystem
@@ -1211,7 +1222,7 @@ ControllerStop(if_name_t if_name, uid_t uid, gid_t gid)
 	} 
     }
 
-#endif /* TARGET_OS_EMBEDDED */
+#endif /* TARGET_OS_IPHONE */
     status = eapolClientStop(client);
  done:
     return (status);
@@ -1296,7 +1307,7 @@ ControllerRetry(if_name_t if_name, uid_t uid, gid_t gid)
 
 }
 
-#if ! TARGET_OS_EMBEDDED
+#if ! TARGET_OS_IPHONE
 
 static CFDictionaryRef
 system_eapol_copy(const char * if_name)
@@ -1479,7 +1490,7 @@ ControllerDidUserCancel(if_name_t if_name)
     return (cancelled);
 }
 
-#endif /* ! TARGET_OS_EMBEDDED */
+#endif /* ! TARGET_OS_IPHONE */
 
 void
 ControllerClientGetSession(pid_t pid, if_name_t if_name,
@@ -1559,7 +1570,7 @@ ControllerClientAttach(pid_t pid, if_name_t if_name,
 	CFDictionarySetValue(dict, kEAPOLClientControlMode,
 			     mode_cf);
 	CFRelease(mode_cf);
-#if ! TARGET_OS_EMBEDDED
+#if ! TARGET_OS_IPHONE
 	/* provide the identifier from the EAP Request Identity packet */
 	if (client->packet_identifier != BAD_IDENTIFIER) {
 	    CFNumberRef			packet_id;
@@ -1569,7 +1580,7 @@ ControllerClientAttach(pid_t pid, if_name_t if_name,
 				 packet_id);
 	    CFRelease(packet_id);
 	}
-#endif /* ! TARGET_OS_EMBEDDED */
+#endif /* ! TARGET_OS_IPHONE */
     }
     else {
 	command_cf = make_number(kEAPOLClientControlCommandStop);
@@ -1578,11 +1589,11 @@ ControllerClientAttach(pid_t pid, if_name_t if_name,
     CFRelease(command_cf);
     *control_dict = dict;
     eapolClientSetState(client, kEAPOLControlStateRunning);
-#if ! TARGET_OS_EMBEDDED
+#if ! TARGET_OS_IPHONE
     if (client->mode == kEAPOLControlModeLoginWindow) {
 	set_loginwindow_config(client);
     }
-#endif /* ! TARGET_OS_EMBEDDED */
+#endif /* ! TARGET_OS_IPHONE */
     return (result);
  failed:
     (void)mach_port_deallocate(mach_task_self(), notify_port);
@@ -1695,7 +1706,7 @@ ControllerClientForceRenew(mach_port_t session_port)
     return (result);
 }
 
-#if ! TARGET_OS_EMBEDDED
+#if ! TARGET_OS_IPHONE
 int
 ControllerClientUserCancelled(mach_port_t session_port)
 {
@@ -1713,11 +1724,14 @@ ControllerClientUserCancelled(mach_port_t session_port)
  failed:
     return (result);
 }
-#endif /* ! TARGET_OS_EMBEDDED */
+#endif /* ! TARGET_OS_IPHONE */
 
 
-#if TARGET_OS_EMBEDDED
+#if TARGET_OS_IPHONE
 
+/*
+ * SIM removal notification
+ */
 static Boolean
 accept_types_valid_aka_or_sim(CFArrayRef accept)
 {
@@ -1746,20 +1760,8 @@ accept_types_valid_aka_or_sim(CFArrayRef accept)
 }
 
 void
-sim_status_changed(CTServerConnectionRef connection,
-						 CFStringRef notification,
-						 CFDictionaryRef notification_info,
-						 void * info)
+sim_status_changed(CFTypeRef connection, CFStringRef status, void * info)
 {
-    if (notification == NULL || notification_info == NULL) {
-	return;
-    }
-    if (CFEqual(notification,
-                kCTSIMSupportSIMStatusChangeNotification) == FALSE) {
-	return;
-    }
-    CFStringRef status = (CFStringRef)CFDictionaryGetValue(notification_info,
-                                                           kCTSIMSupportSIMStatus);
     if (status == NULL) {
 	return;
     }
@@ -1767,26 +1769,26 @@ sim_status_changed(CTServerConnectionRef connection,
 	return;
     }
     EAPLOG_FL(LOG_INFO, "SIM card ejected");
-	eapolClientRef	client;
-	LIST_FOREACH(client, S_clientHead_p, link) {
-    if (client->state == kEAPOLControlStateStarting ||
-		client->state == kEAPOLControlStateRunning) {
-	CFDictionaryRef cli_config = NULL;
+    eapolClientRef	client;
+    LIST_FOREACH(client, S_clientHead_p, link) {
+	if (client->state == kEAPOLControlStateStarting ||
+	    client->state == kEAPOLControlStateRunning) {
+	    CFDictionaryRef cli_config = NULL;
 
-	cli_config = CFDictionaryGetValue(client->config_dict,
-					  kEAPOLControlEAPClientConfiguration);
-	if (isA_CFDictionary(cli_config) != NULL) {
-	    CFArrayRef accept_types = NULL;
+	    cli_config = CFDictionaryGetValue(client->config_dict,
+					      kEAPOLControlEAPClientConfiguration);
+	    if (isA_CFDictionary(cli_config) != NULL) {
+		CFArrayRef accept_types = NULL;
                                                 
-	    accept_types = CFDictionaryGetValue(cli_config,
-						kEAPClientPropAcceptEAPTypes);
-	    if (accept_types_valid_aka_or_sim(accept_types) == TRUE) {
-		/* stop the eapolclient */
-		EAPLOG_FL(LOG_NOTICE, "stopping eapolclient.");
-		eapolClientStop(client);
+		accept_types = CFDictionaryGetValue(cli_config,
+						    kEAPClientPropAcceptEAPTypes);
+		if (accept_types_valid_aka_or_sim(accept_types) == TRUE) {
+		    /* stop the eapolclient */
+		    EAPLOG_FL(LOG_NOTICE, "stopping eapolclient.");
+		    eapolClientStop(client);
+		}
 	    }
 	}
-   }
    }
 
    /* increment the geration ID in SC prefs so eapclient would know
@@ -1796,11 +1798,44 @@ sim_status_changed(CTServerConnectionRef connection,
 }
 
 static void
-handle_wifi_switch_toggle(WiFiDeviceClientRef device, void *refcon)
+register_sim_removal(void)
+{
+    S_SIMAccessConnection = _SIMAccessConnectionCreate();
+    if (S_SIMAccessConnection) {
+	_SIMAccessConnectionRegisterForNotification(S_SIMAccessConnection, sim_status_changed, NULL,
+						    CFRunLoopGetCurrent(), kCFRunLoopDefaultMode);
+    }
+    return;
+}
+
+/*
+ * WiFi power change notification
+ * - WiFi manager callbacks require a runloop (rdar://problem/47165744)
+ * - calling out to other services on the plug-in thread can block it
+ *   for unbounded periods of time, causing issues like rdar://problem/46888119
+ * - create a dispatch queue and dispatch_async all Wi-Fi related communication
+ */
+#include <dispatch/dispatch.h>
+
+static dispatch_queue_t
+get_wifi_queue(void)
+{
+    static dispatch_once_t	once;
+    static dispatch_queue_t	queue;
+
+    dispatch_once(&once, ^{
+	    queue = dispatch_queue_create("EAP WiFi Power", NULL);
+	});
+    return (queue);
+}
+
+static void
+check_for_wifi_power_change(WiFiDeviceClientRef device)
 {
     Boolean current_power_state = WiFiDeviceClientGetPower(device);
 
-    /* increment the geration ID in SC prefs so eapclient would know
+    /*
+     * increment the generation ID in SC prefs so eapclient would know
      * that wifi power was toggled from ON to OFF and it should not
      * use the SIM specific stored info.
      * So turning WiFi power off is similar to ejecting SIM as both actions
@@ -1808,60 +1843,41 @@ handle_wifi_switch_toggle(WiFiDeviceClientRef device, void *refcon)
      * generation ID.
      */
     if (S_wifi_power_state == 1 && current_power_state == 0) {
-	EAPLOG_FL(LOG_INFO, "Wi-Fi power is turned off");
+	EAPLOG_FL(LOG_INFO, "WiFi power is turned off");
 	EAPOLSIMGenerationIncrement();
     }
     S_wifi_power_state = current_power_state;
 }
 
 static void
-register_sim_removal(void)
+handle_wifi_power_change(WiFiDeviceClientRef device, void *refcon)
 {
-    CTError 			cterr;
-    _CTServerConnectionContext	ctx = {	0, NULL, NULL, NULL, NULL };
-
-	S_ct_server_conn = _CTServerConnectionCreate(NULL,
-						 sim_status_changed,
-						 &ctx);
-    if (S_ct_server_conn == NULL) {
-	EAPLOG_FL(LOG_NOTICE,
-		  "_CTServerConnectionCreate failed.");
-	return;
-    }
-    cterr = _CTServerConnectionRegisterForNotification(S_ct_server_conn,
-						       kCTSIMSupportSIMStatusChangeNotification);
-    if (cterr.error) {
-	EAPLOG_FL(LOG_NOTICE,
-		  "_CTServerConnectionRegisterForNotification failed with "
-		  "error: %d", (int)cterr.error);
-	CFRelease(S_ct_server_conn);
-	S_ct_server_conn = NULL;
-    }
-    _CTServerConnectionAddToRunLoop(S_ct_server_conn, CFRunLoopGetCurrent(), kCFRunLoopDefaultMode);
-    return;
+    CFRetain(device);
+    dispatch_async(get_wifi_queue(), ^{
+	    check_for_wifi_power_change(device);
+	    CFRelease(device);
+	});
 }
 
-static WiFiManagerClientRef
-get_wifi_manager_client(void)
+static void
+register_wifi_power_change(WiFiManagerClientRef manager,
+			   WiFiDeviceClientRef device,
+			   CFRunLoopRef runloop)
 {
-    static WiFiManagerClientRef	client = NULL;
-
-    if (client == NULL) {
-	client = WiFiManagerClientCreate(kCFAllocatorDefault,
-					 kWiFiClientTypeNormal);
-    }
-    if (client == NULL) {
-	EAPLOG_FL(LOG_ERR, "Failed to create a WiFiManager client");
-    }
-    return (client);
+    S_wifi_power_state = WiFiDeviceClientGetPower(device);
+    WiFiDeviceClientRegisterPowerCallback(device, handle_wifi_power_change,
+					  NULL);
+    WiFiManagerClientScheduleWithRunLoop(manager, runloop,
+					 kCFRunLoopDefaultMode);
 }
 
 static void
 handle_wifi_device_attach(WiFiManagerClientRef manager,
 			  WiFiDeviceClientRef device,
-			  __unused void * refcon)
+			  void * refcon)
 {
-    static boolean_t device_attached;
+    static boolean_t 	device_attached;
+    CFRunLoopRef	runloop;
 
     if (device_attached) {
 	/* this won't happen because more than one Wi-Fi device won't attach */
@@ -1869,51 +1885,74 @@ handle_wifi_device_attach(WiFiManagerClientRef manager,
     }
     device_attached = TRUE;
     EAPLOG_FL(LOG_DEBUG, "Wi-Fi device attached.");
-    S_wifi_power_state = WiFiDeviceClientGetPower(device);
-    WiFiDeviceClientRegisterPowerCallback(device, handle_wifi_switch_toggle, NULL);
-    /* schedule the invocation of the callback on the configd plugin thread runloop */
-    WiFiManagerClientScheduleWithRunLoop(manager, CFRunLoopGetCurrent(), kCFRunLoopDefaultMode);
+    runloop = CFRunLoopGetCurrent();
+    CFRetain(device);
+    CFRetain(runloop);
+    dispatch_async(get_wifi_queue(), ^{
+	    register_wifi_power_change(manager, device, runloop);
+	    CFRelease(device);
+	    CFRelease(runloop);
+	});
     return;
 }
 
 static void
-register_wifi_device_attachment(WiFiManagerClientRef manager)
+register_wifi_device_attach(WiFiManagerClientRef manager, CFRunLoopRef runloop)
 {
     WiFiManagerClientRegisterDeviceAttachmentCallback(manager,
 						      handle_wifi_device_attach,
 						      NULL);
-    WiFiManagerClientScheduleWithRunLoop(manager, CFRunLoopGetCurrent(), kCFRunLoopDefaultMode);
+    WiFiManagerClientScheduleWithRunLoop(manager, runloop,
+					 kCFRunLoopDefaultMode);
     return;
 }
 
 static void
-register_wifi_toggle(void)
+initialize_wifi_power_change(CFRunLoopRef runloop)
 {
-    WiFiManagerClientRef manager = NULL;;
-    CFArrayRef wifi_devices = NULL;
-    CFIndex count;
+    CFIndex 			count;
+    WiFiManagerClientRef 	manager;
+    CFArrayRef 			wifi_devices;
 
-    manager = get_wifi_manager_client();
+    /* 'manager' object is never released and always remains valid */
+    manager = WiFiManagerClientCreate(kCFAllocatorDefault,
+				      kWiFiClientTypeNormal);
     if (manager == NULL) {
+	EAPLOG_FL(LOG_ERR, "Failed to create WiFiManager client");
 	return;
     }
     wifi_devices = WiFiManagerClientCopyDevices(manager);
     if (wifi_devices == NULL) {
-	register_wifi_device_attachment(manager);
+	/* need to wait for device to appear */
+	register_wifi_device_attach(manager, runloop);
 	return;
     }
     count = CFArrayGetCount(wifi_devices);
     for (CFIndex i = 0; i < count; i++) {
-	WiFiDeviceClientRef wifi_device = (WiFiDeviceClientRef)CFArrayGetValueAtIndex(wifi_devices, i);
-	if (wifi_device) {
-	    S_wifi_power_state = WiFiDeviceClientGetPower(wifi_device);
-	    WiFiDeviceClientRegisterPowerCallback(wifi_device, handle_wifi_switch_toggle, NULL);
-	    /* schedule the invocation of the callback on the configd plugin thread runloop */
-	    WiFiManagerClientScheduleWithRunLoop(manager, CFRunLoopGetCurrent(), kCFRunLoopDefaultMode);
+	WiFiDeviceClientRef device;
+
+	device = (WiFiDeviceClientRef)CFArrayGetValueAtIndex(wifi_devices, i);
+	if (device != NULL) {
+	    register_wifi_power_change(manager, device, runloop);
+	    /* stop after the first one (there will only be one) */
 	    break;
 	}
     }
     my_CFRelease(&wifi_devices);
+}
+
+static void
+initialize_wifi_power_notification(void)
+{
+    CFRunLoopRef runloop;
+
+    /* schedule callbacks on the configd plugin thread */
+    runloop = CFRunLoopGetCurrent();
+    CFRetain(runloop);
+    dispatch_async(get_wifi_queue(), ^{
+	    initialize_wifi_power_change(runloop);
+	    CFRelease(runloop);
+	});
     return;
 }
 
@@ -1938,7 +1977,7 @@ ControllerThread(void * arg)
     return (arg);
 }
 
-#else /* TARGET_OS_EMBEDDED */
+#else /* TARGET_OS_IPHONE */
 
 static void
 console_user_changed()
@@ -2746,7 +2785,7 @@ register_system_ethernet_prefs_change(void)
     SCPreferencesScheduleWithRunLoop(S_eap_prefs, CFRunLoopGetCurrent(), kCFRunLoopCommonModes);
 }
 
-#endif /* TARGET_OS_EMBEDDED */
+#endif /* TARGET_OS_IPHONE */
 
 
 static void
@@ -2834,11 +2873,11 @@ start(const char *bundleName, const char *bundleDir)
     }
     LIST_INIT(S_clientHead_p);
     S_store = dynamic_store_create();
-#if TARGET_OS_EMBEDDED
+#if TARGET_OS_IPHONE
     register_sim_removal();
-#else
+#else /* TARGET_OS_IPHONE */
     register_system_ethernet_prefs_change();
-#endif
+#endif /* TARGET_OS_IPHONE */
     return;
 }
 
@@ -2849,8 +2888,8 @@ prime()
 	return;
     }
     ControllerBegin();
-#if TARGET_OS_EMBEDDED
-    register_wifi_toggle();
-#endif
+#if TARGET_OS_IPHONE
+    initialize_wifi_power_notification();
+#endif /* TARGET_OS_IPHONE */
     return;
 }

@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2009-2014 Apple Inc. All rights reserved.
+ * Copyright (c) 2009-2019 Apple Inc. All rights reserved.
  *
  * @APPLE_LICENSE_HEADER_START@
  * 
@@ -42,7 +42,6 @@
 #include <syslog.h>
 #include <servers/bootstrap.h>
 #include <bootstrap_priv.h>
-#include <TargetConditionals.h>
 #include <CoreFoundation/CFString.h>
 #include <Security/SecIdentity.h>
 #include <Security/SecIdentityPriv.h>
@@ -1297,20 +1296,6 @@ EAPOLClientItemIDGetWLANSSID(EAPOLClientItemIDRef itemID)
     case kEAPOLClientItemIDTypeProfile:
 	return (EAPOLClientProfileGetWLANSSIDAndSecurityType(itemID->u.profile,
 							     NULL));
-    default:
-	break;
-    }
-    return (NULL);
-}
-
-CFStringRef
-EAPOLClientItemIDGetWLANDomain(EAPOLClientItemIDRef itemID)
-{
-    switch (itemID->type) {
-    case kEAPOLClientItemIDTypeWLANDomain:
-	return (itemID->u.domain);
-    case kEAPOLClientItemIDTypeProfile:
-	return (EAPOLClientProfileGetWLANDomain(itemID->u.profile));
     default:
 	break;
     }

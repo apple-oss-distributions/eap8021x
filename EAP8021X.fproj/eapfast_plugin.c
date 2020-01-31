@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2017 Apple Inc. All rights reserved.
+ * Copyright (c) 2002-2019 Apple Inc. All rights reserved.
  *
  * @APPLE_LICENSE_HEADER_START@
  * 
@@ -872,40 +872,44 @@ dict_add_tlv_as_string(CFMutableDictionaryRef dict, CFStringRef key, TLVRef tlv)
 STATIC OSStatus
 pac_keychain_init_items(bool system_mode,
 			const uint8_t * initiator, int initiator_length,
-			CFDataRef * initiator_p, SecAccessRef * access_p,
+			CFDataRef * initiator_p, EAPSecAccessRef * access_p,
 			CFDataRef * descr_p, CFDataRef * label_p)
 {
     OSStatus		status = noErr;
 
-#if TARGET_OS_EMBEDDED
+#if TARGET_OS_IPHONE
     *access_p = NULL;
-#else /* TARGET_OS_EMBEDDED */
-    if (system_mode) {
-	CFErrorRef	error = NULL;
+#else /* TARGET_OS_IPHONE */
+    {
+	SecAccessRef access = NULL;
+	if (system_mode) {
+	    CFErrorRef	error = NULL;
 
-	*access_p = SecAccessCreateWithOwnerAndACL(0, 0, kSecUseOnlyUID,
+	    access = SecAccessCreateWithOwnerAndACL(0, 0, kSecUseOnlyUID,
 						   NULL, &error);
-	if (*access_p == NULL) {
-	    status = errSecAllocate;
-	    if (error != NULL) {
-		EAPLOG(LOG_NOTICE,
-		       "EAP-FAST: mySecAccessCreateWithUid failed, %d",
-		       (int)CFErrorGetCode(error));
-		CFRelease(error);
+	    if (access == NULL) {
+		status = errSecAllocate;
+		if (error != NULL) {
+		    EAPLOG(LOG_NOTICE,
+			"EAP-FAST: mySecAccessCreateWithUid failed, %d",
+			(int)CFErrorGetCode(error));
+		    CFRelease(error);
+		}
+		goto done;
 	    }
-	    goto done;
 	}
-    }
-    else {
-	status = SecAccessCreate(CFSTR("802.1X EAP-FAST Plug-in"),
-				 NULL, access_p);
-	if (status != noErr) {
-	    EAPLOG(LOG_NOTICE, "EAP-FAST: SecAccessCreate failed, %s (%d)",
-		   EAPSecurityErrorString(status), (int)status);
-	    goto done;
+	else {
+	    status = SecAccessCreate(CFSTR("802.1X EAP-FAST Plug-in"),
+				 NULL, &access);
+	    if (status != noErr) {
+		EAPLOG(LOG_NOTICE, "EAP-FAST: SecAccessCreate failed, %s (%d)",
+		       EAPSecurityErrorString(status), (int)status);
+		goto done;
+	    }
 	}
+	*access_p = (EAPSecAccessRef)access;
     }
-#endif /* TARGET_OS_EMBEDDED */
+#endif /* TARGET_OS_IPHONE */
     *initiator_p = CFDataCreate(NULL, initiator, initiator_length);
     *label_p = CFDataCreateWithBytesNoCopy(NULL,
 					   (void *)PAC_KEY_LABEL,
@@ -915,9 +919,9 @@ pac_keychain_init_items(bool system_mode,
 					   (void *)PAC_KEY_DESCR,
 					   PAC_KEY_DESCR_SIZE,
 					   kCFAllocatorNull);
-#if ! TARGET_OS_EMBEDDED
+#if ! TARGET_OS_IPHONE
  done:
-#endif /* ! TARGET_OS_EMBEDDED */
+#endif /* ! TARGET_OS_IPHONE */
     return (status);
 }
 
@@ -926,7 +930,7 @@ pac_keychain_item_create(bool system_mode,
 			 const uint8_t * password, int password_length,
 			 const uint8_t * initiator, int initiator_length)
 {
-    SecAccessRef	access = NULL;
+    EAPSecAccessRef	access = NULL;
     CFDataRef		descr = NULL;
     SecKeychainRef	keychain = NULL;
     CFDataRef		label = NULL;
@@ -942,7 +946,7 @@ pac_keychain_item_create(bool system_mode,
 	goto done;
     }
     password_cf = CFDataCreate(NULL, password, password_length);
-#if ! TARGET_OS_EMBEDDED
+#if ! TARGET_OS_IPHONE
     if (system_mode) {
 	status =  SecKeychainCopyDomainDefault(kSecPreferencesDomainSystem,
 					       &keychain);
@@ -950,7 +954,7 @@ pac_keychain_item_create(bool system_mode,
 	    goto done;
 	}
     }
-#endif /* ! TARGET_OS_EMBEDDED */
+#endif /* ! TARGET_OS_IPHONE */
     status 
 	= EAPSecKeychainPasswordItemCreateUniqueWithAccess(keychain,
 							   access,
@@ -983,7 +987,7 @@ pac_keychain_item_recreate(bool system_mode,
 			   CFDataRef password_cf,
 			   const uint8_t * initiator, int initiator_length)
 {
-    SecAccessRef	access = NULL;
+    EAPSecAccessRef	access = NULL;
     CFDataRef		descr = NULL;
     SecKeychainRef	keychain = NULL;
     CFDataRef		label = NULL;
@@ -995,7 +999,7 @@ pac_keychain_item_recreate(bool system_mode,
     if (status != noErr) {
 	goto done;
     }
-#if ! TARGET_OS_EMBEDDED
+#if ! TARGET_OS_IPHONE
     if (system_mode) {
 	status =  SecKeychainCopyDomainDefault(kSecPreferencesDomainSystem,
 					       &keychain);
@@ -1003,7 +1007,7 @@ pac_keychain_item_recreate(bool system_mode,
 	    goto done;
 	}
     }
-#endif /* ! TARGET_OS_EMBEDDED */
+#endif /* ! TARGET_OS_IPHONE */
     status = EAPSecKeychainPasswordItemCreateWithAccess(keychain,
 							access,
 							unique_id_str,

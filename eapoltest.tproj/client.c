@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2015 Apple Inc. All rights reserved.
+ * Copyright (c) 2002-2019 Apple Inc. All rights reserved.
  *
  * @APPLE_LICENSE_HEADER_START@
  * 
@@ -38,6 +38,8 @@
 #include <SystemConfiguration/SystemConfiguration.h>
 #include <SystemConfiguration/SCDynamicStorePrivate.h>
 #include "EAP8021X/EAPTLSUtil.h"
+#include "EAP8021X/EAPUtil.h"
+#include "EAP8021X/EAPClientConfiguration.h"
 #include "EAPOLControl.h"
 #include "EAPOLControlPrivate.h"
 #include "EAPOLControlPrefs.h"
@@ -254,7 +256,7 @@ S_start(int argc, char * argv[])
     return (result);
 }
 
-#if ! TARGET_OS_EMBEDDED
+#if ! TARGET_OS_IPHONE
 static int
 S_start_system(int argc, char * argv[])
 {
@@ -278,7 +280,7 @@ S_start_system(int argc, char * argv[])
     my_CFRelease(&dict);
     return (result);
 }
-#endif /* ! TARGET_OS_EMBEDDED */
+#endif /* ! TARGET_OS_IPHONE */
 
 static int
 S_stop(int argc, char * argv[])
@@ -372,7 +374,7 @@ S_set_verbose(int argc, char * argv[])
     return (result);
 }
 
-#if ! TARGET_OS_EMBEDDED
+#if ! TARGET_OS_IPHONE
 static int
 S_loginwindow_config(int argc, char * argv[])
 {
@@ -429,7 +431,7 @@ S_get_user_autoconnect(int argc, char * argv[])
 static int
 S_did_user_cancel(int argc, char * argv[])
 {
-    boolean_t		did_cancel;
+    Boolean		did_cancel;
 
     did_cancel = EAPOLControlDidUserCancel(argv[0]);
     printf("%s\n", did_cancel ? "true" : "false");
@@ -450,7 +452,7 @@ S_show_autodetect_info(int argc, char * argv[])
     return (result);
 }
 
-#endif /* ! TARGET_OS_EMBEDDED */
+#endif /* ! TARGET_OS_IPHONE */
 
 static int
 S_wait_for_state(const char * ifname,
@@ -699,6 +701,61 @@ S_verify_server(int argc, char * argv[])
     return (status == kEAPClientStatusOK ? 0 : -1);
 }
 
+static int
+S_export_shareable(int argc, char * argv[])
+{
+    CFDictionaryRef	eapConfig;
+
+    if (argc != 1) {
+	fprintf(stderr, "usage: export_shareable <properties>\n");
+	return (-1);
+    }
+
+    eapConfig = read_dictionary(argv[0]);
+    if (eapConfig == NULL) {
+	fprintf(stderr, "failed to load properties\n");
+	return (-1);
+    }
+    {
+	CFDictionaryRef newEAPConfig = EAPClientConfigurationCopyShareable(eapConfig);
+	if (newEAPConfig == NULL) {
+	    printf("input configuration is not shareable\n");
+	} else {
+	    dump_plist(stdout, newEAPConfig);
+	    CFRelease(newEAPConfig);
+	}
+    }
+    return 0;
+}
+
+static int
+S_import_shareable(int argc, char * argv[])
+{
+    CFDictionaryRef	eapShareableConfig;
+
+    if (argc != 1) {
+	fprintf(stderr, "usage: import_shareable <properties>\n");
+	return (-1);
+    }
+
+    eapShareableConfig = read_dictionary(argv[0]);
+    if (eapShareableConfig == NULL) {
+	fprintf(stderr, "failed to load properties\n");
+	return (-1);
+    }
+    {
+	CFDictionaryRef newEAPConfig = EAPClientConfigurationCopyAndImport(eapShareableConfig);
+	CFRelease(eapShareableConfig);
+	if (newEAPConfig == NULL) {
+	    fprintf(stderr, "failed to import the shareable EAP configuration\n");
+	} else {
+	    dump_plist(stdout, newEAPConfig);
+	    CFRelease(newEAPConfig);
+	}
+    }
+    return 0;
+}
+
 typedef struct {
     char *	command;
     funcptr_t	func;
@@ -718,14 +775,16 @@ static commandInfo commands[] = {
     { "stress_start", S_stress_start, 2, "<interface_name> <config_file>"  },
     { "show_identities", S_show_identities, 0 },
     { "verify_server", S_verify_server, 2, "<cert-file> <properties>" },
-#if ! TARGET_OS_EMBEDDED
+    { "export_shareable", S_export_shareable, 1, "<properties>" },
+    { "import_shareable", S_import_shareable, 1, "<properties>" },
+#if ! TARGET_OS_IPHONE
     { "start_system", S_start_system, 1, "<interface_name> [ <config_file> ]"},
     { "loginwindow_config", S_loginwindow_config, 1, "<interface_name>" },
     { "auto_detect_info", S_show_autodetect_info, 0, NULL },
     { "set_user_autoconnect", S_set_user_autoconnect, 1, "( on | off )" },
     { "get_user_autoconnect", S_get_user_autoconnect, 0, "" },
     { "did_user_cancel", S_did_user_cancel, 1, "<interface_name>" },
-#endif /* ! TARGET_OS_EMBEDDED */
+#endif /* ! TARGET_OS_IPHONE */
     { NULL, NULL, 0, NULL },
 };
 

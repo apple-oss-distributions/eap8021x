@@ -281,7 +281,7 @@ EAPSIMAKAAttributeType
 EAPSIMAKAIdentityTypeGetAttributeType(CFStringRef string);
 
 EAPSIMAKAEncryptedIdentityInfoRef
-EAPSIMAKAInitEncryptedIdentityInfo(CFDictionaryRef properties, bool static_config);
+EAPSIMAKAInitEncryptedIdentityInfo(EAPType type, CFDictionaryRef properties, bool static_config);
 
 void
 EAPSIMAKAClearEncryptedIdentityInfo(EAPSIMAKAEncryptedIdentityInfoRef info);
@@ -313,14 +313,6 @@ EAPSIMAKAClearEncryptedIdentityInfo(EAPSIMAKAEncryptedIdentityInfoRef info);
  * This property is used when identity protection using encrypted IMSI is enabled.
  */
 #define kEAPClientPropEAPSIMAKAAnonymousUserName		CFSTR("EAPSIMAKAAnonymousUserName") /* string */
-
-/*
- * Property: kEAPClientPropEAPSIMAKAEncryptedIdentityEnabled
- * Purpose:
- * Statically configured flag that indicates that the identity protection using
- * encrypted IMSI is enabled.
- */
-#define kEAPClientPropEAPSIMAKAEncryptedIdentityEnabled		CFSTR("EAPSIMAKAEncryptedIdentityEnabled") /* bool */
 
 /*
  * Property: kEAPClientPropEAPSIMAKAEncryptedUsername

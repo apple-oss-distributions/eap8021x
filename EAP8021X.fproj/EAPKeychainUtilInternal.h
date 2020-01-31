@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2006-2010 Apple Inc. All rights reserved.
+ * Copyright (c) 2006-2019 Apple Inc. All rights reserved.
  *
  * @APPLE_LICENSE_HEADER_START@
  * 
@@ -38,7 +38,7 @@
 
 #include <TargetConditionals.h>
 
-#if ! TARGET_OS_EMBEDDED
+#if ! TARGET_OS_IPHONE
 
 #include "symbol_scope.h"
 #include <Security/SecAccess.h>
@@ -46,7 +46,7 @@
 PRIVATE_EXTERN OSStatus
 EAPSecKeychainItemSetAccessForTrustedApplications(SecKeychainItemRef item,
 						  CFArrayRef trusted_apps);
-#endif /* TARGET_OS_EMBEDDED */
+#endif /* ! TARGET_OS_IPHONE */
 
 #endif /* _EAP8021X_EAPKEYCHAINUTILINTERNAL_H */
 

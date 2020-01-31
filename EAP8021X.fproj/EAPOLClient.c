@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2016 Apple Inc. All rights reserved.
+ * Copyright (c) 2002-2019 Apple Inc. All rights reserved.
  *
  * @APPLE_LICENSE_HEADER_START@
  * 
@@ -57,13 +57,12 @@ EAPOLClientInvalidate(EAPOLClientRef client, boolean_t remove_send_right)
 	mach_port_t	port;
 
 	port = CFMachPortGetPort(client->notify_cfport);
+	CFMachPortInvalidate(client->notify_cfport);
 	mach_port_mod_refs(mach_task_self(), port,
 			   MACH_PORT_RIGHT_RECEIVE, -1);
 	if (remove_send_right) {
-	    mach_port_mod_refs(mach_task_self(), port, 
-			       MACH_PORT_RIGHT_SEND, -1);
+	    mach_port_deallocate(mach_task_self(), port);
 	}
-	CFMachPortInvalidate(client->notify_cfport);
 	my_CFRelease(&client->notify_cfport);
     }
     if (client->rls != NULL) {
@@ -97,13 +96,16 @@ EAPOLClientHandleMessage(CFMachPortRef port, void * msg,
 }
 
 static CFMachPortRef
-_EAPOLClientCFMachPortCreate(CFMachPortCallBack callout, CFMachPortContext * context)
+_EAPOLClientCFMachPortCreate(CFMachPortCallBack callout,
+			     CFMachPortContext * context)
 {
     CFMachPortRef	cf_port;
+    Boolean		have_send_right = FALSE;
     mach_port_t 	port = MACH_PORT_NULL;
     kern_return_t 	status;
 
-    status = mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE, &port);
+    status = mach_port_allocate(mach_task_self(), MACH_PORT_RIGHT_RECEIVE,
+				&port);
     if (status != KERN_SUCCESS) {
 	goto failed;
     }
@@ -112,6 +114,7 @@ _EAPOLClientCFMachPortCreate(CFMachPortCallBack callout, CFMachPortContext * con
     if (status != KERN_SUCCESS) {
 	goto failed;
     }
+    have_send_right = TRUE;
     cf_port = CFMachPortCreateWithPort(NULL, port, callout, context, NULL);
     if (cf_port != NULL) {
 	return (cf_port);
@@ -119,7 +122,9 @@ _EAPOLClientCFMachPortCreate(CFMachPortCallBack callout, CFMachPortContext * con
  failed:
     if (port != MACH_PORT_NULL) {
 	mach_port_mod_refs(mach_task_self(), port, MACH_PORT_RIGHT_RECEIVE, -1);
-	mach_port_deallocate(mach_task_self(), port);
+	if (have_send_right) {
+	    mach_port_deallocate(mach_task_self(), port);
+	}
     }
     return NULL;
 
@@ -143,7 +148,7 @@ EAPOLClientEstablishSession(const char * interface_name)
     }
     bzero(if_name, sizeof(if_name));
     strlcpy(if_name, interface_name, sizeof(if_name));
-    status = eapolcontroller_client_get_session(server, mach_task_self(),
+    status = eapolcontroller_client_get_session(server,
 						if_name,
 						&bootstrap, &au_session);
     if (status != KERN_SUCCESS) {
@@ -221,7 +226,7 @@ EAPOLClientAttach(const char * interface_name,
 		  mach_error_string(status));
 	goto failed;
     }
-    status = eapolcontroller_client_attach(server, mach_task_self(),
+    status = eapolcontroller_client_attach(server,
 					   client->if_name,
 					   port, &client->session_port,
 					   &control, &control_len, &result);
@@ -289,7 +294,7 @@ EAPOLClientDetach(EAPOLClientRef * client_p)
 	    result = ENXIO;
 	}
     }
-    EAPOLClientInvalidate(client, TRUE);
+    EAPOLClientInvalidate(client, FALSE);
     free(client);
     *client_p = NULL;
     return (result);
@@ -380,7 +385,7 @@ EAPOLClientForceRenew(EAPOLClientRef client)
     return (result);
 }
 
-#if ! TARGET_OS_EMBEDDED
+#if ! TARGET_OS_IPHONE
 
 int
 EAPOLClientUserCancelled(EAPOLClientRef client)
@@ -397,4 +402,4 @@ EAPOLClientUserCancelled(EAPOLClientRef client)
     return (result);
 }
 
-#endif /* ! TARGET_OS_EMBEDDED */
+#endif /* ! TARGET_OS_IPHONE */

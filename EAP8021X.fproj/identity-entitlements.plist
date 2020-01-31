@@ -2,23 +2,7 @@
 <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
 <plist version="1.0">
 <dict>
-	<key>seatbelt-profiles</key>
-	<array>
-		<string>eapolclient</string>
-	</array>
 	<key>com.apple.networkextension.keychain</key>
-	<true/>
-	<key>com.apple.security.network.server</key>
-	<true/>
-	<key>com.apple.security.network.client</key>
-	<true/>
-	<key>com.apple.CommCenter.fine-grained</key>
-	<array>
-		<string>spi</string>
-		<string>sim-authentication</string>
-		<string>identity</string>
-	</array>
-	<key>com.apple.wlan.authentication</key>
 	<true/>
 	<key>keychain-access-groups</key>
 	<array>

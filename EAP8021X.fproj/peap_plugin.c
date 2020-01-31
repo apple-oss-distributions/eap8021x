@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2017 Apple Inc. All rights reserved.
+ * Copyright (c) 2002-2019 Apple Inc. All rights reserved.
  *
  * @APPLE_LICENSE_HEADER_START@
  * 
@@ -661,6 +661,21 @@ is_supported_type(EAPType type)
     return (FALSE);
 }
 
+/*
+ * This function tells whether the key data can be used
+ */
+static bool
+is_key_data_ready(PEAPPluginDataRef context)
+{
+    if (context->eap.last_type == kEAPTypeGenericTokenCard &&
+	context->peap_version == kPEAPVersion0 &&
+	context->plugin_state == kEAPClientStateSuccess) {
+	return (true);
+    }
+    return (context->key_data_valid &&
+	    context->inner_auth_state == kPEAPInnerAuthStateSuccess);
+}
+
 static EAPType
 next_eap_type(PEAPPluginDataRef context)
 {
@@ -752,7 +767,6 @@ peap_eap_process(EAPClientPluginDataRef plugin, EAPRequestPacketRef in_pkt_p,
 	*call_module_free_packet = TRUE;
 	*out_buf_size = EAPPacketGetLength((EAPPacketRef)out_pkt_p);
     }
-    context->eap.publish_props = eap_client_publish_properties(context);
 
     switch (state) {
     case kEAPClientStateAuthenticating:
@@ -764,17 +778,16 @@ peap_eap_process(EAPClientPluginDataRef plugin, EAPRequestPacketRef in_pkt_p,
 		context->eap.last_status;
 	}
 	break;
-    case kEAPClientStateSuccess:
-	/* authentication method succeeded */
-	context->inner_auth_state = kPEAPInnerAuthStateSuccess;
-	break;
     case kEAPClientStateFailure:
 	/* authentication method failed */
-	context->inner_auth_state = kPEAPInnerAuthStateFailure;
 	*client_status = context->eap.last_status;
-	//context->plugin_state = kEAPClientStateFailure;
+	context->inner_auth_state = kPEAPInnerAuthStateFailure;
+	break;
+    case kEAPClientStateSuccess:
+	context->inner_auth_state = kPEAPInnerAuthStateSuccess;
 	break;
     }
+    context->eap.publish_props = eap_client_publish_properties(context);
 
  done:
     return (out_pkt_p);
@@ -913,7 +926,6 @@ peap_eap(EAPClientPluginDataRef plugin, EAPTLSPacketRef eaptls_in,
 				     client_status,
 				     &call_module_free_packet);
 	if (context->peap_version == kPEAPVersion1) {
-	    context->inner_auth_state = kPEAPInnerAuthStateSuccess;
 	    ret = TRUE;
 	}
 	break;
@@ -1387,9 +1399,13 @@ peap_process(EAPClientPluginDataRef plugin,
 	if (context->inner_auth_state == kPEAPInnerAuthStateSuccess) {
 	    context->plugin_state = kEAPClientStateSuccess;
 	}
-	else if (context->peap_version == kPEAPVersion1
-		 && context->handshake_complete && context->trust_proceed) {
-	    context->plugin_state = kEAPClientStateSuccess;
+	else {
+	    /* it's not expected to receive EAP-Success before inner authentication is done successfully
+	     * rdar://problem/42984203
+	     */
+	    context->inner_auth_state = kPEAPInnerAuthStateFailure;
+	    context->plugin_state = kEAPClientStateFailure;
+	    EAPLOG_FL(LOG_NOTICE, "Tearing down the EAP session as the server is either malicious or has a compliance issue");
 	}
 	break;
     case kEAPCodeFailure:
@@ -1437,7 +1453,7 @@ peap_session_key(EAPClientPluginDataRef plugin, int * key_length)
     PEAPPluginDataRef	context = (PEAPPluginDataRef)plugin->private;
 
     *key_length = 0;
-    if (context->key_data_valid == FALSE) {
+    if (is_key_data_ready(context) == FALSE) {
 	return (NULL);
     }
 
@@ -1452,7 +1468,7 @@ peap_server_key(EAPClientPluginDataRef plugin, int * key_length)
     PEAPPluginDataRef	context = (PEAPPluginDataRef)plugin->private;
 
     *key_length = 0;
-    if (context->key_data_valid == FALSE) {
+    if (is_key_data_ready(context) == FALSE) {
 	return (NULL);
     }
 
@@ -1469,7 +1485,7 @@ peap_msk_copy_bytes(EAPClientPluginDataRef plugin,
     int			ret_msk_size;
 
     if (msk_size < kEAPMasterSessionKeyMinimumSize
-	|| context->key_data_valid == FALSE) {
+	|| is_key_data_ready(context) == FALSE) {
 	ret_msk_size = 0;
     }
     else {
