@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2008-2020 Apple Inc. All rights reserved.
+ * Copyright (c) 2008-2021 Apple Inc. All rights reserved.
  *
  * @APPLE_LICENSE_HEADER_START@
  * 
@@ -391,6 +391,7 @@ STATIC CFStringRef
 sim_identity_create(EAPSIMAKAPersistentStateRef persist,
 		    CFDictionaryRef properties,
 		    EAPSIMAKAAttributeType identity_type,
+		    Boolean use_configured_realm,
 		    Boolean * is_reauth_id_p,
 		    EAPClientStatus * client_status)
 {
@@ -400,8 +401,13 @@ sim_identity_create(EAPSIMAKAPersistentStateRef persist,
     if (is_reauth_id_p != NULL) {
 	*is_reauth_id_p = FALSE;
     }
-    realm = copy_static_realm(properties);
+    if (CFDictionaryContainsKey(properties, kEAPClientPropEAPSIMAKAIMSI) ||
+	use_configured_realm) {
+	/* use configured nai realm  */
+	realm = copy_static_realm(properties);
+    }
     if (realm == NULL) {
+	/* get PLMN based nai realm */
 	realm = SIMCopyRealm(properties);
     }
     ret_identity = create_identity(persist, properties, identity_type, realm,
@@ -415,7 +421,8 @@ sim_identity_create(EAPSIMAKAPersistentStateRef persist,
 STATIC CFStringRef
 sim_identity_create(EAPSIMAKAPersistentStateRef persist,
 		    CFDictionaryRef properties,
-		    EAPSIMAKAAttributeType identity_type, 
+		    EAPSIMAKAAttributeType identity_type,
+		    Boolean use_configured_realm,
 		    Boolean * is_reauth_id_p,
 		    EAPClientStatus * client_status)
 {
@@ -463,7 +470,7 @@ EAPSIMContextSetLastIdentity(EAPSIMContextRef context, CFDataRef identity_data)
 		/* carrier hotspot case: for MK computation we need "1<IMSI>@<NAI realm>" */
 		CFStringRef real_identity = sim_identity_create(context->persist,
 								context->plugin->properties,
-								kAT_PERMANENT_ID_REQ, NULL, NULL);
+								kAT_PERMANENT_ID_REQ, FALSE, NULL, NULL);
 		context->last_identity = CFStringCreateExternalRepresentation(NULL, real_identity,
 									  kCFStringEncodingUTF8, 0);
 		my_CFRelease(&real_identity);
@@ -1024,23 +1031,43 @@ eapsim_start(EAPSIMContextRef context,
 	    /* Wi-Fi calling case */
 	    identity_data = CFRetain(context->plugin->encryptedEAPIdentity);
 	} else if (context->encrypted_identity_info != NULL &&
+		   context->encrypted_identity_info->encrypted_identity != NULL &&
 		   (EAPSIMAKAPersistentStateTemporaryUsernameAvailable(context->persist) == FALSE ||
 		    identity_req_type == kAT_PERMANENT_ID_REQ)) {
-	    if (context->encrypted_identity_info->oob_pseudonym) {
-		/* oob pseudonym for carrier Wi-Fi hotspots */
-		CFStringRef identity = context->encrypted_identity_info->oob_pseudonym;
-		identity_data = CFStringCreateExternalRepresentation(NULL, identity,
-								     kCFStringEncodingUTF8, 0);
-	    } else {
-		/* encrypted IMSI for carrier Wi-Fi hotspots */
-		identity_data = CFRetain(context->encrypted_identity_info->encrypted_identity);
+	    /* encrypted IMSI for carrier Wi-Fi hotspots */
+	    identity_data = CFRetain(context->encrypted_identity_info->encrypted_identity);
+	    EAPSIMContextSetLastIdentity(context, identity_data);
+	} else if (context->encrypted_identity_info != NULL &&
+		   context->encrypted_identity_info->oob_pseudonym != NULL &&
+		   identity_req_type == kAT_PERMANENT_ID_REQ) {
+	    /* unable to send permanent id as the client is providing identity privacy
+	     * using out-of-band pseudonym
+	     */
+	    *client_status = kEAPClientStatusProtocolError;
+	    if (EAPSIMAKAPersistentStateTemporaryUsernameAvailable(context->persist)) {
+		/* purge the temporary ids from the persistent store */
+		EAPLOG(LOG_NOTICE, "eapsim: purging all the temporary identities");
+		EAPSIMAKAPersistentStatePurgeTemporaryIDs(context->persist);
 	    }
+	    /* request CT to refresh the out-of-band pseudonym */
+	    EAPLOG(LOG_NOTICE, "eapsim: requesting out-of-band psuedonym");
+	    SIMReportDecryptionError(NULL);
+	    pkt = NULL;
+	    goto done;
+	} else if (context->encrypted_identity_info != NULL &&
+		   context->encrypted_identity_info->oob_pseudonym != NULL &&
+		   EAPSIMAKAPersistentStateTemporaryUsernameAvailable(context->persist) == FALSE) {
+	    /* send out-of-band pseudonym for any other type of identity request */
+	    CFStringRef identity = context->encrypted_identity_info->oob_pseudonym;
+	    identity_data = CFStringCreateExternalRepresentation(NULL, identity,
+							  kCFStringEncodingUTF8, 0);
 	    EAPSIMContextSetLastIdentity(context, identity_data);
 	} else {
 	    /* legacy */
 	    CFStringRef identity = sim_identity_create(context->persist,
 				       context->plugin->properties,
 				       identity_req_type,
+				       FALSE,
 				       &reauth_id_used,
 				       client_status);
 	    if (identity == NULL) {
@@ -1957,7 +1984,7 @@ eapsim_user_name_copy(CFDictionaryRef properties)
 	    Boolean reauth_id_used = FALSE;
 	    ret_identity = sim_identity_create(persist,
 					       properties,
-					       identity_type, &reauth_id_used, NULL);
+					       identity_type, TRUE, &reauth_id_used, NULL);
 	    if (reauth_id_used) {
 		/* Mark Fast Re-Auth ID has been used */
 		EAPSIMAKAPersistentStateSetReauthIDUsed(persist, TRUE);
@@ -2010,7 +2037,7 @@ eapsim_copy_identity(EAPClientPluginDataRef plugin)
     }
     return (sim_identity_create(context->persist,
 				plugin->properties,
-				kAT_ANY_ID_REQ, NULL, NULL));
+				kAT_ANY_ID_REQ, TRUE, NULL, NULL));
 }
 
 STATIC CFStringRef
