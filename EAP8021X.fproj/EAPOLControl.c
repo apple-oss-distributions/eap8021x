@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2002-2020 Apple Inc. All rights reserved.
+ * Copyright (c) 2002-2020, 2022 Apple Inc. All rights reserved.
  *
  * @APPLE_LICENSE_HEADER_START@
  * 
@@ -144,6 +144,117 @@ EAPOLControlStart(const char * interface_name, CFDictionaryRef config_dict)
 
 #if ! TARGET_OS_IPHONE
 
+static CFDictionaryRef
+copy_auth_info_from_item_id(EAPOLClientItemIDRef item_id)
+{
+    EAPOLClientConfigurationRef		cfg = NULL;
+    EAPOLClientProfileRef		profile = NULL;
+    CFDictionaryRef			auth_props = NULL;
+    CFDataRef 				ssid = NULL;
+    CFStringRef				ssid_str = NULL;
+
+    if (item_id == NULL) {
+	return NULL;
+    }
+    ssid = EAPOLClientItemIDGetWLANSSID(item_id);
+    if (ssid == NULL) {
+	EAPLOG_FL(LOG_NOTICE, "%s: failed to get SSID from the Item ID", __func__);
+	return NULL;
+    }
+    ssid_str = my_CFStringCreateWithData(ssid);
+    EAPLOG_FL(LOG_NOTICE, "%s: EAPOLClientItemIDGetWLANSSID() returned [%@]",
+	      __func__, ssid_str != NULL ? ssid_str : NULL);
+    cfg = EAPOLClientConfigurationCreate(NULL);
+    if (cfg == NULL) {
+	EAPLOG_FL(LOG_NOTICE, "%s: couldn't create configuration", __func__);
+	my_CFRelease(&ssid_str);
+	return NULL;
+    }
+    profile = EAPOLClientConfigurationGetProfileWithWLANSSID(cfg, ssid);
+    if (profile == NULL) {
+	EAPLOG_FL(LOG_NOTICE, "%s: couldn't find profile for SSID [%@]", __func__, ssid_str);
+    } else {
+	auth_props = EAPOLClientProfileGetAuthenticationProperties(profile);
+	if (auth_props == NULL) {
+	    EAPLOG_FL(LOG_NOTICE,
+		      "%s: failed to find authentication properties for SSID [%@]", __func__, ssid_str);
+	} else {
+	    EAPLOG_FL(LOG_NOTICE,
+		      "%s: authentication properties: %@", __func__, auth_props);
+	    CFRetain(auth_props);
+	}
+    }
+    my_CFRelease(&cfg);
+    my_CFRelease(&ssid_str);
+    return auth_props;
+}
+
+static Boolean
+is_ad_credential_source_present(CFDictionaryRef auth_info)
+{
+    Boolean 		ret = FALSE;
+    CFBooleanRef	use_od_cf = NULL;
+
+    if (auth_info == NULL) {
+	return (FALSE);
+    }
+    use_od_cf = CFDictionaryGetValue(auth_info,
+				     kEAPClientPropSystemModeUseOpenDirectoryCredentials);
+    if (isA_CFBoolean(use_od_cf) != NULL && CFBooleanGetValue(use_od_cf)) {
+	CFStringRef nodename = NULL;
+
+	nodename = CFDictionaryGetValue(auth_info,
+					kEAPClientPropSystemModeOpenDirectoryNodeName);
+	if (isA_CFString(nodename) != NULL) {
+	    ret = TRUE;
+	}
+    } else {
+	CFStringRef cred_source = NULL;
+
+	cred_source = CFDictionaryGetValue(auth_info,
+					   kEAPClientPropSystemModeCredentialsSource);
+	if (isA_CFString(cred_source) != NULL) {
+	    ret = CFEqual(cred_source,
+			  kEAPClientCredentialsSourceActiveDirectory);
+	}
+    }
+    return (ret);
+}
+
+static Boolean
+EAPOLControlCredentialsExist(EAPOLClientItemIDRef itemID, EAPOLClientDomain domain)
+{
+    SecIdentityRef 	identity = NULL;
+    CFDataRef		name_data = NULL;
+    CFDataRef		password_data = NULL;
+    Boolean 		ret = FALSE;
+
+    identity = EAPOLClientItemIDCopyIdentity(itemID, domain);
+    if (identity != NULL) {
+	EAPLOG_FL(LOG_DEBUG, "%s: found identity", __func__);
+	my_CFRelease(&identity);
+	return (TRUE);
+    }
+    ret = EAPOLClientItemIDCopyPasswordItem(itemID, domain, &name_data, &password_data);
+    if (ret &&
+	name_data != NULL && CFDataGetLength(name_data) > 0 &&
+	password_data != NULL && CFDataGetLength(password_data) > 0) {
+	EAPLOG_FL(LOG_DEBUG, "%s: found username and password", __func__);
+	ret = TRUE;
+    } else {
+	ret = FALSE;
+    }
+    my_CFRelease(&password_data);
+    my_CFRelease(&name_data);
+    if (ret == FALSE && domain == kEAPOLClientDomainSystem) {
+	CFDictionaryRef auth_info = copy_auth_info_from_item_id(itemID);
+	ret = is_ad_credential_source_present(auth_info);
+	my_CFRelease(&auth_info);
+	EAPLOG_FL(LOG_DEBUG, "%s: %s AD/OD credentials",__func__, ret ? "found" : "did not find");
+    }
+    return (ret);
+}
+
 static Boolean
 EAPOLControlAuthInfoIsValid(CFDictionaryRef * dict_p)
 {
@@ -191,6 +302,18 @@ EAPOLControlAuthInfoIsValid(CFDictionaryRef * dict_p)
 	}
     }
     return (TRUE);
+}
+
+static Boolean
+AuthInfoIsUserInteractionDisabled(CFDictionaryRef auth_info)
+{
+    CFBooleanRef b = NULL;
+
+    if (isA_CFDictionary(auth_info) == NULL) {
+	return (FALSE);
+    }
+    b = isA_CFBoolean(CFDictionaryGetValue(auth_info, kEAPClientPropDisableUserInteraction));
+    return (b != NULL) ? CFBooleanGetValue(b) : FALSE;
 }
 
 const CFStringRef	kEAPOLControlStartOptionManagerName = CFSTR("ManagerName");
@@ -255,12 +378,16 @@ EAPOLControlStartWithClientItemID(const char * if_name,
 				  EAPOLClientItemIDRef itemID,
 				  CFDictionaryRef auth_info)
 {
-    CFDictionaryRef	config_dict;
-    int			count;
-    CFDictionaryRef	item_dict;
-    const void *	keys[2];
-    int			ret;
-    const void *	values[2];
+    CFDictionaryRef		config_dict;
+    int				count;
+    CFDictionaryRef		item_dict;
+    const void *		keys[2];
+    int				ret;
+    const void *		values[2];
+    CFMutableDictionaryRef 	new_auth_info = NULL;
+    Boolean 			user_interaction_disabled= FALSE;
+    Boolean 			ignore_disable_user_interaction = FALSE;
+    Boolean 			ret_failure = FALSE;
 
     if (EAPOLControlAuthInfoIsValid(&auth_info) == FALSE) {
 	return (EINVAL);
@@ -269,20 +396,40 @@ EAPOLControlStartWithClientItemID(const char * if_name,
     if (item_dict == NULL) {
 	return (EINVAL);
     }
+    user_interaction_disabled = AuthInfoIsUserInteractionDisabled(auth_info);
+    if (user_interaction_disabled) {
+	/* credentials availability check matters only when kEAPClientPropDisableUserInteraction is TRUE */
+	EAPLOG_FL(LOG_INFO, "%s: [%@] is set", __func__, kEAPClientPropDisableUserInteraction);
+	if (EAPOLControlCredentialsExist(itemID, kEAPOLClientDomainUser)) {
+	    EAPLOG_FL(LOG_INFO, "%s: credentials found", __func__);
+	    /* don't send this property to supplicant */
+	    ignore_disable_user_interaction = TRUE;
+	} else {
+	    EAPLOG_FL(LOG_INFO, "%s: credentials not found", __func__);
+	    ret_failure = TRUE;
+	}
+    }
 
+    if (auth_info != NULL) {
+	new_auth_info = CFDictionaryCreateMutableCopy(NULL, 0, auth_info);
+	if (ignore_disable_user_interaction) {
+	    CFDictionaryRemoveValue(new_auth_info, kEAPClientPropDisableUserInteraction);
+	}
+    }
     keys[0] = (const void *)kEAPOLControlClientItemID;
     values[0] = (const void *)item_dict;
     count = 1;
-    if (auth_info != NULL) {
+    if (new_auth_info != NULL && CFDictionaryGetCount(new_auth_info) > 0) {
 	keys[1] = (const void *)kEAPOLControlEAPClientConfiguration;
-	values[1] = (const void *)auth_info;
+	values[1] = (const void *)new_auth_info;
 	count = 2;
     }
     config_dict = CFDictionaryCreate(NULL, keys, values, count,
 				     &kCFTypeDictionaryKeyCallBacks,
 				     &kCFTypeDictionaryValueCallBacks);
     CFRelease(item_dict);
-    ret = EAPOLControlStart(if_name, config_dict);
+    my_CFRelease(&new_auth_info);
+    ret = ret_failure ? EINVAL : EAPOLControlStart(if_name, config_dict);
     if (config_dict != NULL) {
         CFRelease(config_dict);
     }
@@ -499,7 +646,7 @@ EAPOLControlStartSystem(const char * interface_name, CFDictionaryRef options)
     kern_return_t		status;
     xmlDataOut_t		xml_data = NULL;
     CFIndex			xml_data_len = 0;
-    
+
     if (get_server_port(&server, &status) == FALSE) {
 	result = ENXIO;
 	goto done;
@@ -548,13 +695,17 @@ EAPOLControlStartSystemWithClientItemID(const char * interface_name,
     CFStringRef		key;
     int			ret;
 
+    if (EAPOLControlCredentialsExist(itemID, kEAPOLClientDomainSystem) == FALSE) {
+	EAPLOG_FL(LOG_INFO, "%s: credentials not found", __func__);
+	return (EINVAL);
+    }
     item_dict = EAPOLClientItemIDCopyDictionary(itemID);
     if (item_dict == NULL) {
 	return (EINVAL);
     }
     key = kEAPOLControlClientItemID;
     config_dict = CFDictionaryCreate(NULL,
-				     (const void * *)&key, 
+				     (const void * *)&key,
 				     (const void * *)&item_dict,
 				     1,
 				     &kCFTypeDictionaryKeyCallBacks,
