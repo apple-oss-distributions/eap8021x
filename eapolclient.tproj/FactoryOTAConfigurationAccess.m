@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2022, 2024 Apple Inc. All rights reserved.
+ * Copyright (c) 2024 Apple Inc. All rights reserved.
  *
  * @APPLE_LICENSE_HEADER_START@
  *
@@ -25,38 +25,35 @@
 
 #if TARGET_OS_IOS && !TARGET_OS_VISION
 
-#import <MobileInBoxUpdate/MobileInBoxUpdate.h>
-#import <MobileInBoxUpdate/MIBUClient.h>
+#import <FactoryOTAEAPClient/FactoryOTAEAPClient.h>
 #import <Security/SecIdentityPriv.h>
-#import "MIBConfigurationAccess.h"
+#import "FactoryOTAConfigurationAccess.h"
 #import "myCFUtil.h"
 #import "EAPLog.h"
 
-static MIBUClient *
-GetMIBUClient(void)
+static FactoryOTAEAPClient *
+GetFactoryOTAEAPClient(void)
 {
-    static dispatch_once_t	once;
-    static MIBUClient 		*mibuClient = nil;
+    static dispatch_once_t		once;
+    static FactoryOTAEAPClient 		*factoryOTAClient = nil;
 
     dispatch_once(&once, ^{
-	mibuClient = [[MIBUClient alloc] init];
+	factoryOTAClient = [[FactoryOTAEAPClient alloc] init];
     });
-    return (mibuClient);
+    return (factoryOTAClient);
 }
 
-static MIBEAPConfigurationRef
-MIBConfigurationConvertToMIBEAPConfiguration(MIBUEAPConfiguartion *configuration) {
-    MIBEAPConfigurationRef eapConfig = NULL;
+static Boolean
+CopyFOTAEAPConfiguration(FactoryOTAEAPConfiguration *configuration, FOTAEAPConfigurationRef eapConfig) {
     if (configuration) {
 	if (CFGetTypeID((CFTypeRef)[configuration.tlsCertificateChain firstObject]) != SecCertificateGetTypeID()) {
-	    EAPLOG_FL(LOG_ERR, "received invalid client certificate from MIB");
-	    return NULL;
+	    EAPLOG_FL(LOG_ERR, "received invalid client certificate from Factory OTA Client");
+	    return FALSE;
 	}
 	if (CFGetTypeID(configuration.tlsKey) != SecKeyGetTypeID()) {
-	    EAPLOG_FL(LOG_ERR, "received invalid client private key from MIB");
-	    return NULL;
+	    EAPLOG_FL(LOG_ERR, "received invalid client private key from Factory OTA Client");
+	    return FALSE;
 	}
-	eapConfig = (MIBEAPConfigurationRef)malloc(sizeof(*eapConfig));
 	bzero(eapConfig, sizeof(*eapConfig));
 	SecCertificateRef leaf = (__bridge SecCertificateRef)[configuration.tlsCertificateChain firstObject];
 	eapConfig->tlsClientIdentity = SecIdentityCreate(kCFAllocatorDefault, leaf, (SecKeyRef)configuration.tlsKey);
@@ -66,34 +63,39 @@ MIBConfigurationConvertToMIBEAPConfiguration(MIBUEAPConfiguartion *configuration
 	    eapConfig->tlsClientCertificateChain = certs;
 	}
     }
-    return eapConfig;
+    return TRUE;
 }
 
 void
-MIBConfigurationAccessFetchEAPConfiguration(MIBConfigurationAccessCallback callback, void *context) {
+FactoryOTAConfigurationAccessFetchEAPConfiguration(FactoryOTAConfigurationAccessCallback callback, void *context) {
     @autoreleasepool {
-	MIBUClient *mibuClient = GetMIBUClient();
-	[mibuClient eapConfigurationWithCompletion:^(MIBUEAPConfiguartion *configuration, NSError *error) {
-	    MIBEAPConfigurationRef eapConfig = NULL;
+	FactoryOTAEAPClient *factoryOTAClient = GetFactoryOTAEAPClient();
+	[factoryOTAClient eapConfigurationWithCompletion:^(FactoryOTAEAPConfiguration *configuration, NSError *error) {
+	    FOTAEAPConfiguration eapConfig;
+	    Boolean success = FALSE;
 	    if (error) {
-		EAPLOG_FL(LOG_ERR, "failed to fetch EAP configuration from MIB, error: %@", error);
+		EAPLOG_FL(LOG_ERR, "failed to fetch EAP configuration from Factory OTA Client, error: %@", error);
 	    } else {
-		eapConfig = MIBConfigurationConvertToMIBEAPConfiguration(configuration);
+		EAPLOG_FL(LOG_NOTICE, "received EAP configuration from Factory OTA Client");
+		success = CopyFOTAEAPConfiguration(configuration, &eapConfig);
 	    }
-	    dispatch_async(dispatch_get_main_queue(), ^{
-		if (callback) {
-		    callback(context, eapConfig);
+	    if (callback) {
+		FOTAEAPConfigurationRef eapConfigRef = success ? &eapConfig : NULL;
+		callback(context, eapConfigRef);
+		if (eapConfigRef != NULL) {
+		    my_CFRelease(&eapConfigRef->tlsClientIdentity);
+		    my_CFRelease(&eapConfigRef->tlsClientCertificateChain);
 		}
-	    });
+	    }
 	}];
     }
 }
 
 bool
-MIBConfigurationAccessIsInBoxUpdateMode(void) {
+FactoryOTAConfigurationAccessIsInFactoryMode(void) {
     @autoreleasepool {
-	MIBUClient *mibuClient = GetMIBUClient();
-	return ([mibuClient isInBoxUpdateMode:nil] == YES);
+	FactoryOTAEAPClient *factoryOTAClient = GetFactoryOTAEAPClient();
+	return ([factoryOTAClient isInFactoryMode] == YES);
     }
 }
 

@@ -91,9 +91,12 @@
 		4423D5752187C7C90077D03D /* EAPClientPluginIntrospect.h in Copy Headers (24) (24) (24) (24) (24) (24) (24) (24) (24) (24) (24) (24) (24) (24) */ = {isa = PBXBuildFile; fileRef = 4423D5742187C7C90077D03D /* EAPClientPluginIntrospect.h */; };
 		4423D5762187C7C90077D03D /* EAPClientPluginIntrospect.h in Copy Headers (24) (24) (24) (24) (24) (24) (24) (24) (24) (24) (24) (24) (24) (24) */ = {isa = PBXBuildFile; fileRef = 4423D5742187C7C90077D03D /* EAPClientPluginIntrospect.h */; };
 		442403311DA86E6E0041C533 /* MobileWiFi.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 442403301DA86E6E0041C533 /* MobileWiFi.framework */; };
+		442F7CD62B1E5CA100224026 /* EAPWiFiUtil.m in Sources */ = {isa = PBXBuildFile; fileRef = 442F7CD52B1E5CA100224026 /* EAPWiFiUtil.m */; };
+		442F7CD92B1E5F5900224026 /* CoreWiFi.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 442F7CD82B1E5F5900224026 /* CoreWiFi.framework */; };
 		4434A3E42166B75B0067E1E3 /* EAPClientConfiguration.c in Sources */ = {isa = PBXBuildFile; fileRef = 4474E8AB2166AD8C00CD7B6D /* EAPClientConfiguration.c */; };
 		4461C8F92280B86B00CBCB24 /* libbsm.dylib in Frameworks */ = {isa = PBXBuildFile; fileRef = 4461C8F82280B86A00CBCB24 /* libbsm.dylib */; };
 		4461C8FB2280B8AD00CBCB24 /* libbsm.tbd in Frameworks */ = {isa = PBXBuildFile; fileRef = 4461C8FA2280B8AD00CBCB24 /* libbsm.tbd */; };
+		446AA4F72B57026B00CCA553 /* FactoryOTAConfigurationAccess.m in Sources */ = {isa = PBXBuildFile; fileRef = 446AA4F62B57026B00CCA553 /* FactoryOTAConfigurationAccess.m */; };
 		447011B325DB1260007F7D25 /* AppSSO.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = 447011B225DB125F007F7D25 /* AppSSO.framework */; settings = {ATTRIBUTES = (Required, ); }; };
 		4474E8AA2166AD5A00CD7B6D /* EAPClientConfiguration.h in Copy Headers (24) (24) (24) (24) (24) (24) (24) (24) (24) (24) (24) (24) (24) (24) */ = {isa = PBXBuildFile; fileRef = 4474E8A92166AD5A00CD7B6D /* EAPClientConfiguration.h */; settings = {ATTRIBUTES = (Private, ); }; };
 		4474E8AC2166AD8C00CD7B6D /* EAPClientConfiguration.c in Sources */ = {isa = PBXBuildFile; fileRef = 4474E8AB2166AD8C00CD7B6D /* EAPClientConfiguration.c */; };
@@ -108,6 +111,7 @@
 		44951A3B1EBA79C6003614DE /* eapolcfg_auth.8 in CopyFiles */ = {isa = PBXBuildFile; fileRef = 44951A3A1EBA79BE003614DE /* eapolcfg_auth.8 */; };
 		44980A3E1ABBC60400B76F01 /* sim_simulator.c in Sources */ = {isa = PBXBuildFile; fileRef = 44980A3C1ABB93B200B76F01 /* sim_simulator.c */; };
 		44980A3F1ABBC61A00B76F01 /* sim_simulator.c in Sources */ = {isa = PBXBuildFile; fileRef = 44980A3C1ABB93B200B76F01 /* sim_simulator.c */; };
+		4498C4722C069EE2009F6BF7 /* FactoryOTAConfigurationAccess.m in Sources */ = {isa = PBXBuildFile; fileRef = 446AA4F62B57026B00CCA553 /* FactoryOTAConfigurationAccess.m */; };
 		44AF45C8296F7DBF0075FCF0 /* eapolcfg.c in Sources */ = {isa = PBXBuildFile; fileRef = F960449F10D1CA46000D803D /* eapolcfg.c */; };
 		44AF45CA296F7DBF0075FCF0 /* EAP8021X.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F91547640CD78FA7008D9897 /* EAP8021X.framework */; };
 		44AF45CB296F7DBF0075FCF0 /* CoreFoundation.framework in Frameworks */ = {isa = PBXBuildFile; fileRef = F9FE9C690C92234E0004CCD4 /* CoreFoundation.framework */; };
@@ -532,13 +536,19 @@
 
 /* Begin PBXFileReference section */
 		4407E9FC29AD4FDB0016A8B8 /* entitlements-macos.plist */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = text.plist.xml; path = "entitlements-macos.plist"; sourceTree = "<group>"; };
+		440BE9862B19AC130022CB0B /* CoreWiFi.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreWiFi.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX15.0.Internal.sdk/System/Library/PrivateFrameworks/CoreWiFi.framework; sourceTree = DEVELOPER_DIR; };
 		440EC83527E9014F00F753D6 /* MIBConfigurationAccess.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = MIBConfigurationAccess.m; sourceTree = "<group>"; };
 		440EC83727E9015D00F753D6 /* MIBConfigurationAccess.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = MIBConfigurationAccess.h; sourceTree = "<group>"; };
 		4423D5742187C7C90077D03D /* EAPClientPluginIntrospect.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = EAPClientPluginIntrospect.h; sourceTree = "<group>"; };
 		442403301DA86E6E0041C533 /* MobileWiFi.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = MobileWiFi.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS10.2.Internal.sdk/System/Library/PrivateFrameworks/MobileWiFi.framework; sourceTree = DEVELOPER_DIR; };
+		442F7CD52B1E5CA100224026 /* EAPWiFiUtil.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = EAPWiFiUtil.m; sourceTree = "<group>"; };
+		442F7CD72B1E5CAF00224026 /* EAPWiFiUtil.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = EAPWiFiUtil.h; sourceTree = "<group>"; };
+		442F7CD82B1E5F5900224026 /* CoreWiFi.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreWiFi.framework; path = Platforms/MacOSX.platform/Developer/SDKs/MacOSX14.4.Internal.sdk/System/Library/PrivateFrameworks/CoreWiFi.framework; sourceTree = DEVELOPER_DIR; };
 		4445AE4320659AD40051CCCD /* CoreTelephony.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = CoreTelephony.framework; path = System/Library/Frameworks/CoreTelephony.framework; sourceTree = SDKROOT; };
 		4461C8F82280B86A00CBCB24 /* libbsm.dylib */ = {isa = PBXFileReference; lastKnownFileType = "compiled.mach-o.dylib"; name = libbsm.dylib; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS13.0.Internal.sdk/usr/lib/libbsm.dylib; sourceTree = DEVELOPER_DIR; };
 		4461C8FA2280B8AD00CBCB24 /* libbsm.tbd */ = {isa = PBXFileReference; lastKnownFileType = "sourcecode.text-based-dylib-definition"; name = libbsm.tbd; path = usr/lib/libbsm.tbd; sourceTree = SDKROOT; };
+		446AA4F62B57026B00CCA553 /* FactoryOTAConfigurationAccess.m */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.objc; path = FactoryOTAConfigurationAccess.m; sourceTree = "<group>"; };
+		446AA4F92B57027700CCA553 /* FactoryOTAConfigurationAccess.h */ = {isa = PBXFileReference; fileEncoding = 4; lastKnownFileType = sourcecode.c.h; path = FactoryOTAConfigurationAccess.h; sourceTree = "<group>"; };
 		447011B225DB125F007F7D25 /* AppSSO.framework */ = {isa = PBXFileReference; lastKnownFileType = wrapper.framework; name = AppSSO.framework; path = Platforms/iPhoneOS.platform/Developer/SDKs/iPhoneOS15.0.Internal.sdk/System/Library/PrivateFrameworks/AppSSO.framework; sourceTree = DEVELOPER_DIR; };
 		4474E8A92166AD5A00CD7B6D /* EAPClientConfiguration.h */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.h; path = EAPClientConfiguration.h; sourceTree = "<group>"; };
 		4474E8AB2166AD8C00CD7B6D /* EAPClientConfiguration.c */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.c.c; path = EAPClientConfiguration.c; sourceTree = "<group>"; };
@@ -744,6 +754,7 @@
 			isa = PBXFrameworksBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				442F7CD92B1E5F5900224026 /* CoreWiFi.framework in Frameworks */,
 				4461C8F92280B86B00CBCB24 /* libbsm.dylib in Frameworks */,
 				442403311DA86E6E0041C533 /* MobileWiFi.framework in Frameworks */,
 				449213AC1D12062700D8FB30 /* CoreTelephony.framework in Frameworks */,
@@ -865,6 +876,8 @@
 		449213AA1D12062700D8FB30 /* Frameworks */ = {
 			isa = PBXGroup;
 			children = (
+				440BE9862B19AC130022CB0B /* CoreWiFi.framework */,
+				442F7CD82B1E5F5900224026 /* CoreWiFi.framework */,
 				44D03D7E29106DEA0010EF7C /* Network.framework */,
 				44D03D8029106DF50010EF7C /* Network.framework */,
 				F95DEDED26F1A3500080AA19 /* MobileKeyBag.framework */,
@@ -1096,6 +1109,7 @@
 		F91F7B9B0C8F8482000EA394 /* Sources */ = {
 			isa = PBXGroup;
 			children = (
+				442F7CD52B1E5CA100224026 /* EAPWiFiUtil.m */,
 				F91F7B5B0C8F7F2C000EA394 /* controller.c */,
 				F91F7B6B0C8F7F2C000EA394 /* server.c */,
 			);
@@ -1105,6 +1119,7 @@
 		F91F7B9C0C8F848D000EA394 /* Headers */ = {
 			isa = PBXGroup;
 			children = (
+				442F7CD72B1E5CAF00224026 /* EAPWiFiUtil.h */,
 				F91F7B5A0C8F7F2C000EA394 /* ClientControlInterface.h */,
 				F91F7B5C0C8F7F2C000EA394 /* controller.h */,
 				F91F7B6C0C8F7F2C000EA394 /* server.h */,
@@ -1115,6 +1130,7 @@
 		F91F7B9D0C8F84A7000EA394 /* Sources */ = {
 			isa = PBXGroup;
 			children = (
+				446AA4F62B57026B00CCA553 /* FactoryOTAConfigurationAccess.m */,
 				440EC83527E9014F00F753D6 /* MIBConfigurationAccess.m */,
 				44EAF9E125DA600300817560 /* AppSSOProviderAccess.m */,
 				F98E42EA19017F4900DE4397 /* wireless.m */,
@@ -1136,6 +1152,7 @@
 		F91F7B9E0C8F84B1000EA394 /* Headers */ = {
 			isa = PBXGroup;
 			children = (
+				446AA4F92B57027700CCA553 /* FactoryOTAConfigurationAccess.h */,
 				440EC83727E9015D00F753D6 /* MIBConfigurationAccess.h */,
 				44EAF9E325DA601600817560 /* AppSSOProviderAccess.h */,
 				F94E3F750F6706510061BC58 /* InterestNotification.h */,
@@ -1679,6 +1696,7 @@
 			isa = PBXSourcesBuildPhase;
 			buildActionMask = 2147483647;
 			files = (
+				4498C4722C069EE2009F6BF7 /* FactoryOTAConfigurationAccess.m in Sources */,
 				44EAF9E225DA600300817560 /* AppSSOProviderAccess.m in Sources */,
 				F90FEE480CA3338A00A7B5A8 /* main.c in Sources */,
 				F90FEE490CA3338A00A7B5A8 /* Supplicant.c in Sources */,
@@ -1700,6 +1718,7 @@
 				F90FEE680CA3342D00A7B5A8 /* controller.c in Sources */,
 				F90FEE6C0CA3342D00A7B5A8 /* server.c in Sources */,
 				F90FEE6D0CA3342D00A7B5A8 /* eapolcontroller.defs in Sources */,
+				442F7CD62B1E5CA100224026 /* EAPWiFiUtil.m in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};
@@ -1851,6 +1870,7 @@
 				F9B7FB620C95CA7000BBD057 /* KeyValue.c in Sources */,
 				F9B7FB630C95CA7200BBD057 /* mylog.c in Sources */,
 				F9B7FB650C95CA7300BBD057 /* wireless.c in Sources */,
+				446AA4F72B57026B00CCA553 /* FactoryOTAConfigurationAccess.m in Sources */,
 				F98E42EB19017F4900DE4397 /* wireless.m in Sources */,
 				F9B7FB660C95CA7400BBD057 /* Dialogue.c in Sources */,
 				F94E3F740F6706420061BC58 /* InterestNotification.c in Sources */,
@@ -2090,6 +2110,7 @@
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(SYMROOT)",
 					"$(SYSTEM_LIBRARY_DIR)/PrivateFrameworks",
+					"$(SDKROOT)$(APPLE_INTERNAL_LIBRARY_DIR)/Frameworks",
 				);
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_PREPROCESSOR_DEFINITIONS = USE_SYSTEMCONFIGURATION_PRIVATE_HEADERS;
@@ -2103,8 +2124,11 @@
 				"OTHER_LDFLAGS[sdk=iphoneos*]" = (
 					"-weak_framework",
 					MobileInBoxUpdate,
+					"-weak_framework",
+					FactoryOTAEAPClient,
 				);
 				"OTHER_LDFLAGS[sdk=watchos*]" = "";
+				"OTHER_LDFLAGS[sdk=xros*]" = "";
 				PRODUCT_NAME = eapolclient;
 				SECTORDER_FLAGS = "";
 				WARNING_CFLAGS = (
@@ -2127,6 +2151,7 @@
 				FRAMEWORK_SEARCH_PATHS = (
 					"$(SYMROOT)",
 					"$(SYSTEM_LIBRARY_DIR)/PrivateFrameworks",
+					"$(SDKROOT)$(APPLE_INTERNAL_LIBRARY_DIR)/Frameworks",
 				);
 				GCC_DYNAMIC_NO_PIC = NO;
 				GCC_PREPROCESSOR_DEFINITIONS = USE_SYSTEMCONFIGURATION_PRIVATE_HEADERS;
@@ -2140,8 +2165,11 @@
 				"OTHER_LDFLAGS[sdk=iphoneos*]" = (
 					"-weak_framework",
 					MobileInBoxUpdate,
+					"-weak_framework",
+					FactoryOTAEAPClient,
 				);
 				"OTHER_LDFLAGS[sdk=watchos*]" = "";
+				"OTHER_LDFLAGS[sdk=xros*]" = "";
 				PRODUCT_NAME = eapolclient;
 				SECTORDER_FLAGS = "";
 				WARNING_CFLAGS = (
